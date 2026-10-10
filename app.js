@@ -1,6 +1,7 @@
 // ==========================================
-// app.js - 本格AI ＆ 順次入力UI対応
+// app.js - 職人定跡ハイブリッドAI ＆ 順次入力対応
 // ==========================================
+const UPDATE_VERSION = "Ver 6.0 (職人定跡AI ＆ ループ完全撲滅)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -43,6 +44,9 @@ let multiHitResults = [];
 // 初期化・イベント
 // ==========================================
 document.addEventListener("DOMContentLoaded", async () => {
+    const titleEl = document.querySelector("h1");
+    if (titleEl) titleEl.textContent = `防具鍛冶ツール - ${UPDATE_VERSION}`;
+
     const floatUI = document.createElement("div");
     floatUI.id = "float-quick-input";
     floatUI.className = "hidden";
@@ -250,17 +254,15 @@ function handleSkillSelect(skill) {
 }
 
 // ==========================================
-// 順次入力 UIフロー (複数マス対応)
+// 順次入力 UIフロー 
 // ==========================================
 function handleCellClick(targetIndex, isAuto = false, event = null) {
     if (currentActionState !== "skillSelected" || !selectedSkill) return;
     let targets = getMultiHitTargets(selectedSkill.name, targetIndex);
     if(targets.length === 0) return;
     
-    // 履歴保存 (1手分として全体を保存)
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
     
-    // キューの初期化
     multiHitQueue = [...targets];
     multiHitResults = [];
     
@@ -268,7 +270,6 @@ function handleCellClick(targetIndex, isAuto = false, event = null) {
 }
 
 function showNextMiniPopup() {
-    // 全マスの入力が完了したら実行フェーズへ
     if (multiHitQueue.length === 0) {
         finalizeMultiHit();
         return;
@@ -282,27 +283,22 @@ function showNextMiniPopup() {
     
     const dist = getDamageDistribution(currentTemp, selectedSkill.mult);
 
-    // タイトル
     let title = document.createElement("div");
     title.className = "float-title";
     title.textContent = `▶ マス[${cellLetters[tIndex]}] の結果`;
     floatUI.appendChild(title);
 
-    // ① 通常ヒット枠
     let btnGroupNorm = document.createElement("div");
     btnGroupNorm.className = "float-btn-group";
     dist.forEach(dmg => {
         let btn = document.createElement("button");
         btn.className = "float-btn";
         btn.textContent = dmg;
-        btn.addEventListener("click", () => {
-            recordCellResult(dmg, false);
-        }); 
+        btn.addEventListener("click", () => recordCellResult(dmg, false)); 
         btnGroupNorm.appendChild(btn);
     });
     floatUI.appendChild(btnGroupNorm);
 
-    // ② 会心ヒット枠
     let titleCrit = document.createElement("div");
     titleCrit.className = "float-title crit";
     titleCrit.innerHTML = "⚡ 会心ヒット";
@@ -315,14 +311,11 @@ function showNextMiniPopup() {
         let btn = document.createElement("button");
         btn.className = "float-btn crit-val";
         btn.textContent = critDmg;
-        btn.addEventListener("click", () => {
-            recordCellResult(critDmg, true);
-        }); 
+        btn.addEventListener("click", () => recordCellResult(critDmg, true)); 
         btnGroupCrit.appendChild(btn);
     });
     floatUI.appendChild(btnGroupCrit);
 
-    // ③ 手入力ボタン
     let manualBtn = document.createElement("button");
     manualBtn.className = "float-btn manual-btn";
     manualBtn.innerHTML = "手入力 (選択肢にない場合)";
@@ -332,7 +325,6 @@ function showNextMiniPopup() {
     });
     floatUI.appendChild(manualBtn);
 
-    // ポップアップの表示と位置調整
     floatUI.classList.remove("hidden");
     const cell = document.getElementById(`forge-cell-${tIndex}`);
     const rect = cell.getBoundingClientRect();
@@ -343,18 +335,16 @@ function showNextMiniPopup() {
     floatUI.style.left = `${x}px`;
     floatUI.style.top = `${y}px`;
     
-    // ハイライト
     document.querySelectorAll('.forge-cell').forEach(c => c.classList.remove('targeting'));
     cell.classList.add('targeting');
 }
 
 function recordCellResult(val, isCrit) {
-    const tIndex = multiHitQueue.shift(); // 先頭を取り出す
+    const tIndex = multiHitQueue.shift(); 
     multiHitResults.push({ target: tIndex, value: val, isCrit: isCrit });
-    showNextMiniPopup(); // 次のマスへ
+    showNextMiniPopup(); 
 }
 
-// 全マスの入力が終わった後の処理
 function finalizeMultiHit() {
     currentFocus -= selectedSkill.focus;
     
@@ -363,12 +353,11 @@ function finalizeMultiHit() {
         gridState[res.target].value += res.value;
         const endVal = gridState[res.target].value;
         
-        // 会心で成功ゾーンに収まった場合、確率付きで本会心確認
         if (res.isCrit && endVal >= gridState[res.target].min && endVal <= gridState[res.target].max) {
             const probText = calcTrueCritProb(startVal, res.value, gridState[res.target].min, gridState[res.target].max, currentTemp, selectedSkill.mult);
             const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
             
-            const isTrueCrit = confirm(`マス[${cellLetters[res.target]}]: 会心で成功ゾーンに入りました！\n\n【AI分析: ${probText}】\n\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n・はい ＝ 本会心としてロック\n・いいえ ＝ そのまま`);
+            const isTrueCrit = confirm(`マス[${cellLetters[res.target]}]: 会心で成功ゾーンに入りました！\n\n【AI分析: ${probText}】\n\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n・はい ＝ 本会心としてロック\n・いいえ ＝ 偽会心 (後から叩けます)`);
             if (isTrueCrit) gridState[res.target].isLocked = true;
         }
     });
@@ -394,15 +383,13 @@ function executeTempSkill() {
     calculateAI();
 }
 
-// --- 本会心確率の計算 ---
 function calcTrueCritProb(startVal, addedVal, minZ, maxZ, temp, mult) {
-    if (addedVal % 2 !== 0) return "100% (奇数ダメージのため確定)";
-    
+    if (addedVal % 2 !== 0) return "100%確定 (奇数ダメージのため)";
     const dist = getDamageDistribution(temp, mult);
     if(dist.length === 0) return "不明";
     
     const minCrit = dist[0] * 2;
-    if (startVal + minCrit > maxZ) return "100% (最小乱数でも枠を超えるため確定)";
+    if (startVal + minCrit > maxZ) return "100%確定 (最小乱数でも枠を超えるため)";
     
     const maxCrit = dist[dist.length - 1] * 2;
     if (startVal + addedVal === startVal + maxCrit) return "偽会心の可能性大 (最大乱数と同じ数値)";
@@ -410,37 +397,48 @@ function calcTrueCritProb(startVal, addedVal, minZ, maxZ, temp, mult) {
     return "約50% (偽会心のリスクあり)";
 }
 
-// --- 手入力用モーダル (単一マスずつ入力するように変更) ---
 function openSingleInputModal(tIndex) {
     const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
     document.getElementById("modal-skill-info").textContent = `マス[${cellLetters[tIndex]}] の手入力`;
     
-    // 入力欄を1つだけ用意
-    const input = document.getElementById("manual-number-input");
-    input.value = "";
-    document.getElementById("check-critical").checked = false;
+    let cont = document.getElementById("numpad-inputs");
+    if(!cont) {
+        const oldInput = document.getElementById("manual-number-input");
+        cont = document.createElement("div");
+        cont.id = "numpad-inputs";
+        oldInput.parentNode.insertBefore(cont, oldInput);
+        oldInput.style.display = "none";
+    }
+    cont.innerHTML = `
+        <div style="margin-bottom:10px;">
+            <input type="number" id="manual-val-input" style="width:100px; font-size:1.5em; text-align:center; padding:5px;">
+            <label style="color:#ffeb3b; font-weight:bold; margin-left:10px;"><input type="checkbox" id="manual-crit-check"> 会心</label>
+        </div>
+    `;
     
     document.getElementById("modal-input").classList.remove("hidden");
-    setTimeout(() => input.focus(), 10);
+    const inputEl = document.getElementById("manual-val-input");
+    setTimeout(() => inputEl.focus(), 10);
+    window.currentActiveInput = inputEl;
 }
 
 document.getElementById("btn-cancel-input").addEventListener("click", () => {
-    // キャンセルされたらフロートUIに戻る
     document.getElementById("modal-input").classList.add("hidden");
     showNextMiniPopup(); 
 });
 
 document.querySelectorAll(".num-key").forEach(key => {
     key.addEventListener("click", (e) => {
-        const input = document.getElementById("manual-number-input");
+        const input = window.currentActiveInput;
+        if (!input) return;
         if (e.target.classList.contains("clear")) input.value = "";
         else if (e.target.classList.contains("enter")) {
             let val = parseInt(input.value);
             if (isNaN(val)) { alert("数値を入力してください"); return; }
-            let isCrit = document.getElementById("check-critical").checked;
+            let isCrit = document.getElementById("manual-crit-check").checked;
             
             document.getElementById("modal-input").classList.add("hidden");
-            recordCellResult(val, isCrit); // 入力を記録して次へ
+            recordCellResult(val, isCrit);
         }
         else input.value += e.target.textContent;
     });
@@ -456,11 +454,11 @@ document.getElementById("btn-undo").addEventListener("click", () => {
 });
 
 // ==========================================
-// 完全数式ベースAI (ループ完全撲滅)
+// 職人定跡ハイブリッドAI (絶対ルールによるループ撲滅)
 // ==========================================
 function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "AI思考中... (盤面期待値を数式で演算中)";
+    aiBox.textContent = "AI思考中... (職人定跡と盤面期待値を演算中)";
     aiSuggestedMove = null;
 
     setTimeout(() => {
@@ -478,6 +476,7 @@ function calculateAI() {
             aiBox.innerHTML = `
                 <div style="font-size:1.1em; margin-bottom:5px;">💡 <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に使用</div>
                 <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
+                【AI方針】 ${bestMove.reasoning}<br>
                 (盤面期待値: ${Math.floor(bestMove.score)} point)
                 </div>
             `;
@@ -489,29 +488,37 @@ function calculateAI() {
 }
 
 function searchBestMove(state, temp, focus, depth) {
-    let bestSkill = null; let bestTargets = []; let bestScore = -Infinity;
+    let bestSkill = null; let bestTargets = []; let bestScore = -Infinity; let bestReason = "";
     const level = parseInt(document.getElementById("artisan-level").value) || 80;
+    const jigane = currentRecipe.jiganeType;
     
     let critRateBase = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
     critRateBase += 0.046; 
 
-    // ★ ループ完全撲滅: 残り距離から「目標温度」を算出 ★
+    // ★ 職人の定跡ルール（これで物理的にループは不可能になる） ★
     let maxShortfall = 0;
     state.forEach(s => {
         if (!s.isLocked && s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
     });
     
     let optimalTemp = 1000;
-    if (maxShortfall > 150) optimalTemp = 1600;
-    else if (maxShortfall > 90) optimalTemp = 1300;
-    else optimalTemp = 1000;
+    if (jigane === "光") {
+        optimalTemp = 2000; 
+    } else {
+        if (maxShortfall > 150) optimalTemp = 1600;
+        else if (maxShortfall > 80) optimalTemp = 1300;
+    }
+
+    // フェーズの定義
+    let isEarlyPhase = (temp < optimalTemp && maxShortfall > 80);
+    let isLatePhase = (maxShortfall <= 50);
 
     SKILLS.forEach(skill => {
         if (level < skill.reqLevel || focus < skill.focus) return;
 
-        // 【禁止ルール】目標温度に達している場合は、温度変更スキルを計算の選択肢から完全に除外する
-        if (skill.name === "火力上げ" && temp >= optimalTemp) return; 
-        if (skill.name === "冷やし込み" && temp <= optimalTemp) return; 
+        // 【絶対禁止ルール】
+        if (skill.name === "火力上げ" && !isEarlyPhase) return; // 序盤の目標温度到達前以外は絶対に禁止
+        if (skill.name === "冷やし込み" && (!isLatePhase || temp <= 1000)) return; // 終盤で温度が高い時以外は絶対に禁止
 
         let startIndices = [0];
         if (skill.type !== "temp" && skill.type !== "random") {
@@ -522,11 +529,20 @@ function searchBestMove(state, temp, focus, depth) {
         startIndices.forEach(startIndex => {
             let targets = skill.type === "temp" ? [] : getMultiHitTargets(skill.name, startIndex);
             let expectedScore = 0;
+            let reasoning = "";
             const nextFocus = focus - skill.focus;
             
             if (skill.type === "temp") {
                 let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + skill.tempChange));
-                expectedScore = evaluateBoardStateMath(state, nextTemp, nextFocus, optimalTemp); 
+                expectedScore = evaluateBoardStateMath(state, nextTemp, nextFocus); 
+                
+                if (skill.name === "火力上げ") {
+                    expectedScore += 1000000; // 序盤は最優先で強制実行
+                    reasoning = `序盤のセオリー: 目標温度(${optimalTemp}℃)まで火力を上げます。`;
+                } else if (skill.name === "冷やし込み") {
+                    expectedScore += 5000; 
+                    reasoning = `終盤のセオリー: はみ出しを防ぐため安全な温度まで下げます。`;
+                }
                 
                 if (depth > 1) {
                     let nextBest = searchBestMove(state, nextTemp, nextFocus, depth - 1);
@@ -551,7 +567,7 @@ function searchBestMove(state, temp, focus, depth) {
                 samples.forEach(sample => {
                     let nextStateNorm = JSON.parse(JSON.stringify(state));
                     targets.forEach(t => nextStateNorm[t].value += sample.val);
-                    let scoreNorm = evaluateBoardStateMath(nextStateNorm, temp - tempDrop, nextFocus, optimalTemp);
+                    let scoreNorm = evaluateBoardStateMath(nextStateNorm, temp - tempDrop, nextFocus);
 
                     let nextStateCrit = JSON.parse(JSON.stringify(state));
                     targets.forEach(t => {
@@ -563,7 +579,7 @@ function searchBestMove(state, temp, focus, depth) {
                             nextStateCrit[t].value = newValue;
                         }
                     });
-                    let scoreCrit = evaluateBoardStateMath(nextStateCrit, temp - tempDrop, nextFocus, optimalTemp);
+                    let scoreCrit = evaluateBoardStateMath(nextStateCrit, temp - tempDrop, nextFocus);
 
                     if (depth > 1) {
                         if (scoreNorm > -50000) {
@@ -575,25 +591,24 @@ function searchBestMove(state, temp, focus, depth) {
                             if (nbCrit) scoreCrit = (scoreCrit + nbCrit.score) / 2;
                         }
                     }
-
                     totalScore += (scoreNorm * (1 - currentCritRate) + scoreCrit * currentCritRate) * sample.prob;
                 });
                 expectedScore = totalScore;
+                if (skill.isCritUp) reasoning = "本会心(または博打)による成功ゾーン入れを狙います。";
+                else if (targets.length > 1) reasoning = "複数マスを同時に削る効率的な手です。";
+                else reasoning = "成功ゲージへ向けて堅実に寄せていきます。";
             }
 
             if (expectedScore > bestScore) {
-                bestScore = expectedScore; bestSkill = skill; bestTargets = targets;
+                bestScore = expectedScore; bestSkill = skill; bestTargets = targets; bestReason = reasoning;
             }
         });
     });
 
-    return { skill: bestSkill, targets: bestTargets, score: bestScore };
+    return { skill: bestSkill, targets: bestTargets, score: bestScore, reasoning: bestReason };
 }
 
-// ----------------------------------------------------
-// 【AIの心臓部】 放物線グラフ計算 
-// ----------------------------------------------------
-function evaluateBoardStateMath(state, currentTemp, currentFocus, optimalTemp) {
+function evaluateBoardStateMath(state, currentTemp, currentFocus) {
     let score = 0;
     let isAllDone = true;
     
@@ -624,10 +639,6 @@ function evaluateBoardStateMath(state, currentTemp, currentFocus, optimalTemp) {
     });
 
     if (isAllDone) score += 500000; 
-
-    // 目標温度から離れているほどマイナス（火力上げ等の行動を誘導する）
-    score -= Math.abs(currentTemp - optimalTemp) * 20;
-
     score += currentFocus * 150;
     return score;
 }
