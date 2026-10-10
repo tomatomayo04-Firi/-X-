@@ -1,293 +1,180 @@
 // ==========================================
-// app.js - アプリケーションのメイン処理
+// data.js - 各種データ定義と外部データ取得
 // ==========================================
 
-let currentRecipe = null;
-let currentTemp = 1000;
-let currentFocus = 0;
-let maxFocus = 0;
-let gridState = []; 
-let history = []; 
+const MAX_TEMP = 2000;
+const MIN_TEMP = 0;
+const TEMP_STEP = 50;
 
-document.addEventListener("DOMContentLoaded", async () => {
-    try {
-        await loadRecipeData();
-        renderRecipeList();
-        
-        document.getElementById("filter-type").addEventListener("change", renderRecipeList);
-        document.getElementById("filter-jigane").addEventListener("change", renderRecipeList);
-        document.getElementById("filter-crystal").addEventListener("change", renderRecipeList);
-        
-        document.getElementById("btn-load-recipes").addEventListener("click", async () => {
-            document.getElementById("recipe-list").innerHTML = '<li class="loading">再読み込み中...</li>';
-            await loadRecipeData();
-            renderRecipeList();
-        });
-    } catch (e) {
-        document.getElementById("recipe-list").innerHTML = `<li style="color:red">スクリプト実行エラー: ${e.message}</li>`;
+// レベルごとの集中力初期値 (1〜80レベル)
+const FOCUS_BY_LEVEL = {
+    1: 50, 2: 52, 3: 53, 4: 56, 5: 57, 6: 60, 7: 61, 8: 64, 9: 67, 10: 67,
+    11: 70, 12: 73, 13: 73, 14: 76, 15: 79, 16: 79, 17: 82, 18: 84, 19: 87, 20: 87,
+    21: 90, 22: 93, 23: 93, 24: 96, 25: 98, 26: 101, 27: 101, 28: 104, 29: 109, 30: 109,
+    31: 112, 32: 113, 33: 113, 34: 115, 35: 119, 36: 122, 37: 123, 38: 123, 39: 125, 40: 129,
+    41: 132, 42: 134, 43: 137, 44: 139, 45: 142, 46: 142, 47: 144, 48: 147, 49: 149, 50: 152,
+    51: 152, 52: 154, 53: 157, 54: 159, 55: 162, 56: 162, 57: 164, 58: 167, 59: 169, 60: 169,
+    61: 171, 62: 171, 63: 173, 64: 175, 65: 177, 66: 180, 67: 182, 68: 184, 69: 186, 70: 188,
+    71: 189, 72: 191, 73: 193, 74: 195, 75: 197, 76: 199, 77: 201, 78: 203, 79: 205, 80: 207
+};
+
+// スキル一覧
+const SKILLS = [
+    { id: "たたく", name: "たたく", type: "normal", mult: 1.0, focus: 5, reqLevel: 1 },
+    { id: "上下打ち", name: "上下打ち", type: "multi", mult: 1.2, focus: 8, reqLevel: 2 },
+    { id: "てかげん打ち", name: "てかげん打ち", type: "normal", mult: 0.5, focus: 10, reqLevel: 3 },
+    { id: "2倍打ち", name: "2倍打ち", type: "normal", mult: 2.0, focus: 8, reqLevel: 5 },
+    { id: "火力上げ", name: "火力上げ", type: "temp", tempChange: 300, focus: 10, reqLevel: 7 },
+    { id: "4連打ち", name: "4連打ち", type: "multi", mult: 1.2, focus: 12, reqLevel: 11 },
+    { id: "みだれ打ち", name: "みだれ打ち", type: "random", mult: 0.8, focus: 7, reqLevel: 13 },
+    { id: "3倍打ち", name: "3倍打ち", type: "normal", mult: 3.0, focus: 11, reqLevel: 16 },
+    { id: "ねらい打ち", name: "ねらい打ち", type: "normal", mult: 1.0, focus: 16, reqLevel: 23, isCritUp: true },
+    { id: "超4連打ち", name: "超4連打ち", type: "multi", mult: 2.0, focus: 18, reqLevel: 27 },
+    { id: "冷やし込み", name: "冷やし込み", type: "temp", tempChange: -300, focus: 12, reqLevel: 33 },
+    { id: "ななめ打ち", name: "ななめ打ち", type: "multi", mult: 1.2, focus: 7, reqLevel: 38 },
+    { id: "熱風おろし", name: "熱風おろし", type: "normal", mult: 2.5, focus: 6, reqLevel: 47, specialTempDrop: 150 },
+    { id: "弱ねらい打ち", name: "弱ねらい打ち", type: "normal", mult: 0.5, focus: 20, reqLevel: 75, isCritUp: true },
+    { id: "左右打ち", name: "左右打ち", type: "multi", mult: 1.2, focus: 8, reqLevel: 80 }
+];
+
+// 装備部位ごとのマス配置 (空白は null で管理)
+const EQUIP_LAYOUTS = {
+    "小盾": { rows: 2, cols: 2, cells: ["A", "B", "C", "D"] },
+    "大盾": { rows: 2, cols: 2, cells: ["A", "B", "C", "D"] },
+    "アタマ": { rows: 2, cols: 2, cells: ["A", "B", "C", "D"] },
+    "からだ上": { rows: 3, cols: 2, cells: ["A", "B", "C", "D", "E", "F"] },
+    "からだ下": { rows: 4, cols: 2, cells: ["A", "B", "C", "D", "E", "F", "G", "H"] },
+    "ウデ": { rows: 3, cols: 1, cells: ["A", "B", "C"] },
+    "足": { rows: 3, cols: 2, cells: [null, "A", null, "B", "C", "D"] }
+};
+
+// --- 温度ごとの威力データ ---
+const BASE_DAMAGE_RANGES = {
+    2000: {min: 18, max: 27}, 1950: {min: 18, max: 27}, 1900: {min: 18, max: 27},
+    1850: {min: 18, max: 26}, 1800: {min: 17, max: 26}, 1750: {min: 17, max: 25},
+    1700: {min: 17, max: 25}, 1650: {min: 16, max: 24}, 1600: {min: 16, max: 24},
+    1550: {min: 16, max: 23}, 1500: {min: 15, max: 23}, 1450: {min: 15, max: 23},
+    1400: {min: 15, max: 22}, 1350: {min: 15, max: 22}, 1300: {min: 14, max: 21},
+    1250: {min: 14, max: 21}, 1200: {min: 14, max: 20}, 1150: {min: 13, max: 20},
+    1100: {min: 13, max: 19}, 1050: {min: 13, max: 19}, 1000: {min: 12, max: 18},
+    950:  {min: 12, max: 18}, 900:  {min: 12, max: 18}, 850:  {min: 12, max: 17},
+    800:  {min: 11, max: 17}, 750:  {min: 11, max: 16}, 700:  {min: 11, max: 16},
+    650:  {min: 10, max: 15}, 600:  {min: 10, max: 15}, 550:  {min: 10, max: 14},
+    500:  {min: 9,  max: 14}, 450:  {min: 9,  max: 14}, 400:  {min: 9,  max: 13},
+    350:  {min: 9,  max: 13}, 300:  {min: 8,  max: 12}, 250:  {min: 8,  max: 12},
+    200:  {min: 8,  max: 11}, 150:  {min: 7,  max: 11}, 100:  {min: 7,  max: 10},
+    50:   {min: 7,  max: 10}
+};
+
+function getDamageDistribution(temp, mult) {
+    let base = BASE_DAMAGE_RANGES[temp];
+    if (!base) return [];
+    let dist = [];
+    for (let i = base.min; i <= base.max; i++) {
+        let val = Math.floor(i * mult);
+        if (!dist.includes(val)) dist.push(val);
     }
-});
-
-function renderRecipeList() {
-    const listElement = document.getElementById("recipe-list");
-    
-    // エラーがある場合は一番上にファイルアップロードボタン付きの警告を表示
-    listElement.innerHTML = window.recipeLoadWarning || ""; 
-    
-    // 手動ファイル読み込みイベントを付与
-    const fileInput = document.getElementById("local-file-input");
-    if (fileInput) {
-        fileInput.addEventListener("change", (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(evt) {
-                parseRecipeText(evt.target.result);
-                window.recipeLoadWarning = ""; // 読み込み成功したら警告を消す
-                renderRecipeList(); // リストを再描画
-                alert("ファイルの読み込みに成功しました！");
-            };
-            reader.readAsText(file);
-        });
-    }
-
-    const filterType = document.getElementById("filter-type").value;
-    const filterJigane = document.getElementById("filter-jigane").value;
-    const filterCrystal = document.getElementById("filter-crystal").checked;
-
-    const filteredRecipes = RECIPES.filter(recipe => {
-        if (filterType !== "all" && recipe.category !== filterType) return false;
-        if (filterJigane !== "all" && recipe.jiganeType !== filterJigane) return false;
-        if (filterCrystal && !recipe.isCrystal) return false;
-        return true;
-    });
-
-    if (filteredRecipes.length === 0 && !window.recipeLoadWarning) {
-        listElement.innerHTML += "<li>条件に一致するレシピがありません。</li>";
-        return;
-    }
-
-    filteredRecipes.forEach(recipe => {
-        const li = document.createElement("li");
-        li.innerHTML = `
-            <strong>${recipe.name}</strong> 
-            <span class="recipe-meta">
-                ( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} ${recipe.isCrystal ? ' / 💎結晶' : ''} )
-            </span>
-        `;
-        li.addEventListener("click", () => startSmithing(recipe));
-        listElement.appendChild(li);
-    });
+    return dist.sort((a,b) => a - b);
 }
 
-// --- 以下、鍛冶画面の処理（変更なし） ---
-function startSmithing(recipe) {
-    currentRecipe = recipe;
-    document.getElementById("current-recipe-name").textContent = recipe.name;
-    document.getElementById("display-jigane").textContent = `地金: ${recipe.jiganeType}`;
-    
-    currentTemp = 1000;
-    const level = parseInt(document.getElementById("artisan-level").value) || 80;
-    const hammerBonus = 45; 
-    maxFocus = (FOCUS_BY_LEVEL[level] || 207) + hammerBonus;
-    currentFocus = maxFocus;
-    
-    gridState = [];
-    recipe.targets.forEach(target => {
-        gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false });
-    });
-    
-    history = [];
-    updateStatusUI();
-    renderGrid();
-    setupSkills(level);
-    
-    document.getElementById("scene-select").classList.remove("active");
-    document.getElementById("scene-smithing").classList.add("active");
-    
-    calculateAI();
+// --- レシピ読み込み処理（エラー制御・タイムアウト付き） ---
+const DRIVE_FILE_ID = "1R-Y0zsQq2LMHP3lfq8IdHy9WvZMZee9A";
+let RECIPES = []; 
+window.recipeLoadWarning = ""; // エラーメッセージ用変数
+
+// タイムアウト付きフェッチ
+async function fetchWithTimeout(url, timeoutMs) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return response;
 }
 
-function updateStatusUI() {
-    document.getElementById("current-temp").textContent = currentTemp;
-    document.getElementById("current-focus").textContent = currentFocus;
-    document.getElementById("max-focus").textContent = maxFocus;
-}
+async function loadRecipeData() {
+    window.recipeLoadWarning = ""; // 初期化
+    const directUrl = encodeURIComponent(`https://drive.google.com/uc?export=download&id=${DRIVE_FILE_ID}`);
+    // プロキシを2種類用意（どちらか成功すればOK）
+    const proxies = [
+        `https://api.allorigins.win/raw?url=${directUrl}`,
+        `https://corsproxy.io/?${directUrl}`
+    ];
 
-function renderGrid() {
-    const gridContainer = document.getElementById("smithing-grid");
-    gridContainer.innerHTML = "";
-    
-    const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
-    gridContainer.style.gridTemplateColumns = `repeat(${layout.cols}, 60px)`;
-    
-    let targetIndex = 0;
-    layout.cells.forEach((cellName) => {
-        if (cellName === null) {
-            gridContainer.appendChild(document.createElement("div"));
-            return;
-        }
-        if (targetIndex >= gridState.length) return;
-        
-        const state = gridState[targetIndex];
-        const cellDiv = document.createElement("div");
-        cellDiv.className = "forge-cell";
-        
-        const absoluteMax = state.max * 1.2;
-        const fillHeight = Math.min(100, (state.value / absoluteMax) * 100);
-        const targetBottom = (state.min / absoluteMax) * 100;
-        const targetHeight = ((state.max - state.min) / absoluteMax) * 100;
-        
-        cellDiv.innerHTML = `
-            <div class="gauge-target-zone" style="bottom: ${targetBottom}%; height: ${targetHeight}%;"></div>
-            <div class="gauge-fill" style="height: ${fillHeight}%;"></div>
-            <div class="gauge-text">${state.value}</div>
-        `;
-        
-        let currentIndex = targetIndex;
-        cellDiv.addEventListener("click", () => openInputModal("たたく", currentIndex));
-        
-        gridContainer.appendChild(cellDiv);
-        targetIndex++;
-    });
-}
+    let textData = null;
 
-function setupSkills(level) {
-    const skillList = document.getElementById("skill-list");
-    skillList.innerHTML = "";
-    SKILLS.forEach(skill => {
-        if (level >= skill.reqLevel) {
-            const btn = document.createElement("button");
-            btn.className = "skill-btn";
-            btn.textContent = `${skill.name} (${skill.focus})`;
-            btn.addEventListener("click", () => openInputModal(skill.name, 0));
-            skillList.appendChild(btn);
-        }
-    });
-}
-
-function calculateAI() {
-    const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "計算中...";
-    let bestSkill = null;
-    let bestScore = -9999;
-    let bestTarget = 0;
-    
-    SKILLS.forEach(skill => {
-        const level = parseInt(document.getElementById("artisan-level").value) || 80;
-        if (level < skill.reqLevel || currentFocus < skill.focus) return;
-        
-        gridState.forEach((state, index) => {
-            if (state.isLocked) return;
-            if (skill.type === "temp") return; 
-            
-            const dist = getDamageDistribution(currentTemp, skill.mult);
-            if (dist.length === 0) return;
-            
-            let successCount = 0;
-            let overCount = 0;
-            let critRate = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
-            critRate += 0.046; 
-            if (skill.isCritUp) critRate += (0.046 * 6); 
-            
-            dist.forEach(dmg => {
-                const valNormal = state.value + dmg;
-                if (valNormal >= state.min && valNormal <= state.max) successCount += (1 - critRate);
-                if (valNormal > state.max) overCount += (1 - critRate);
-                
-                const valCrit = state.value + (dmg * 2);
-                if (valCrit >= state.min && valCrit <= state.max) successCount += critRate;
-                if (valCrit > state.max) overCount += critRate;
-            });
-            
-            const probSuccess = successCount / dist.length;
-            const probOver = overCount / dist.length;
-            const score = (probSuccess * 100) - (probOver * 200);
-            
-            if (score > bestScore) {
-                bestScore = score; bestSkill = skill; bestTarget = index;
+    // 通信フリーズを防ぐため、各プロキシ最大4秒で諦める
+    for (let url of proxies) {
+        try {
+            const res = await fetchWithTimeout(url, 4000);
+            if (res.ok) {
+                const text = await res.text();
+                // 取得データがHTMLエラーページでないかを判定
+                if (text && (text.includes("小盾") || text.includes("大盾"))) {
+                    textData = text;
+                    break;
+                }
             }
-        });
-    });
-    
-    if (bestSkill && bestScore > -100) {
-        const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-        aiBox.innerHTML = `おすすめ: <strong>${bestSkill.name}</strong> を <strong>マス${cellLetters[bestTarget]}</strong> に打つ<br>
-        <span style="font-size:0.8em; color:#ccc;">(成功見込み: ${Math.max(0, bestScore).toFixed(1)}%)</span>`;
+        } catch (e) {
+            console.warn("プロキシ接続失敗:", e);
+        }
+    }
+
+    if (textData) {
+        parseRecipeText(textData);
+        return true;
     } else {
-        aiBox.innerHTML = `おすすめ: <strong>火力上げ</strong> または <strong>冷やし込み</strong> で温度を調整`;
+        // 取得失敗時にエラーメッセージとファイルアップロードUIを生成
+        window.recipeLoadWarning = `
+            <li style="background:#552222; padding:15px; margin-bottom:10px; border-radius:5px;">
+                ⚠️ 外部データの自動読み込みがブロックされました。<br>
+                <span style="font-size:0.8em; color:#ddd;">(ブラウザのセキュリティ設定等が原因です)</span><br><br>
+                以下のボタンから、お手元の <b>「防具鍛治レシピ.txt」</b> を直接選択してください。<br>
+                <label style="display:inline-block; margin-top:10px; padding:10px 20px; background:#e09f3e; color:#000; font-weight:bold; cursor:pointer; border-radius:5px;">
+                    ▶ ローカルのレシピデータ(.txt)を読み込む
+                    <input type="file" id="local-file-input" accept=".txt" style="display:none;">
+                </label>
+            </li>
+        `;
+        // 何も表示されないのを防ぐため、最低限の予備データを追加
+        fallbackRecipes();
+        return false;
     }
 }
 
-// --- 入力モーダル関連 ---
-let activeSkill = null;
-let activeTarget = null;
-
-function openInputModal(skillName, targetIndex) {
-    activeSkill = SKILLS.find(s => s.name === skillName);
-    activeTarget = targetIndex;
-    document.getElementById("modal-skill-info").textContent = `使用スキル: ${skillName} (対象: ${targetIndex + 1}マス目)`;
-    document.getElementById("manual-number-input").value = "";
-    document.getElementById("check-critical").checked = false;
+function parseRecipeText(text) {
+    RECIPES = [];
+    const lines = text.split('\n');
     
-    const quickBox = document.getElementById("quick-select-numbers");
-    quickBox.innerHTML = "";
-    if (activeSkill && activeSkill.type !== "temp") {
-        const dist = getDamageDistribution(currentTemp, activeSkill.mult);
-        dist.forEach(dmg => {
-            const btn = document.createElement("button");
-            btn.className = "quick-btn";
-            btn.textContent = dmg;
-            btn.addEventListener("click", () => document.getElementById("manual-number-input").value = dmg);
-            quickBox.appendChild(btn);
-        });
-    }
-    document.getElementById("modal-input").classList.remove("hidden");
-}
+    lines.forEach(line => {
+        line = line.replace(/ /g, ' ').trim();
+        if (line === "" || line.startsWith('ー')) return; 
 
-document.getElementById("btn-cancel-input").addEventListener("click", () => document.getElementById("modal-input").classList.add("hidden"));
-document.getElementById("btn-back").addEventListener("click", () => {
-    document.getElementById("scene-smithing").classList.remove("active");
-    document.getElementById("scene-select").classList.add("active");
-});
+        let parts = line.split(/\s+/);
+        if (parts.length >= 6) {
+            let targets = [];
+            let isCrystal = false;
+            
+            for (let i = 5; i < parts.length; i++) {
+                if (parts[i].includes('-')) {
+                    let vals = parts[i].split('-');
+                    targets.push({ min: parseInt(vals[0]), max: parseInt(vals[1]) });
+                } else if (parts[i] === '結晶') {
+                    isCrystal = true;
+                }
+            }
 
-document.querySelectorAll(".num-key").forEach(key => {
-    key.addEventListener("click", (e) => {
-        const input = document.getElementById("manual-number-input");
-        if (e.target.classList.contains("clear")) input.value = "";
-        else if (e.target.classList.contains("enter")) submitAction();
-        else input.value += e.target.textContent;
+            RECIPES.push({
+                name: parts[0], category: parts[1], 
+                createLv: parseInt(parts[2]) || 1, equipLv: parseInt(parts[3]) || 1, 
+                jiganeType: parts[4], targets: targets, isCrystal: isCrystal
+            });
+        }
     });
-});
-
-function submitAction() {
-    const val = parseInt(document.getElementById("manual-number-input").value);
-    if (isNaN(val) && activeSkill.type !== "temp") { alert("数値を入力してください"); return; }
-    
-    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
-    currentFocus -= activeSkill.focus;
-    
-    if (activeSkill.type === "temp") {
-        currentTemp += activeSkill.tempChange;
-    } else {
-        let dmg = val;
-        if (document.getElementById("check-critical").checked) dmg = val * 2; 
-        gridState[activeTarget].value += dmg;
-        currentTemp -= (activeSkill.specialTempDrop || 50);
-    }
-    
-    if (currentTemp < MIN_TEMP) currentTemp = MIN_TEMP;
-    if (currentTemp > MAX_TEMP) currentTemp = MAX_TEMP;
-    
-    document.getElementById("modal-input").classList.add("hidden");
-    updateStatusUI();
-    renderGrid();
-    calculateAI();
 }
 
-document.getElementById("btn-undo").addEventListener("click", () => {
-    if (history.length === 0) return;
-    const lastState = JSON.parse(history.pop());
-    currentTemp = lastState.temp; currentFocus = lastState.focus; gridState = lastState.grid;
-    updateStatusUI(); renderGrid(); calculateAI();
-});
+function fallbackRecipes() {
+    RECIPES = [
+        { name: "【予備】メタスラの盾", category: "小盾", createLv: 33, equipLv: 60, jiganeType: "集中変化", targets: [{min:200,max:214},{min:160,max:166},{min:120,max:128},{min:150,max:158}], isCrystal: true },
+        { name: "【予備】みずがめの大盾", category: "大盾", createLv: 75, equipLv: 128, jiganeType: "光", targets: [{min:468,max:476},{min:282,max:290},{min:502,max:510},{min:232,max:240}], isCrystal: false }
+    ];
+}
