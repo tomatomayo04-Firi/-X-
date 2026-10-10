@@ -30,11 +30,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 function renderRecipeList() {
     const listElement = document.getElementById("recipe-list");
-    
-    // エラーがある場合は一番上にファイルアップロードボタン付きの警告を表示
     listElement.innerHTML = window.recipeLoadWarning || ""; 
     
-    // 手動ファイル読み込みイベントを付与
     const fileInput = document.getElementById("local-file-input");
     if (fileInput) {
         fileInput.addEventListener("change", (e) => {
@@ -43,8 +40,8 @@ function renderRecipeList() {
             const reader = new FileReader();
             reader.onload = function(evt) {
                 parseRecipeText(evt.target.result);
-                window.recipeLoadWarning = ""; // 読み込み成功したら警告を消す
-                renderRecipeList(); // リストを再描画
+                window.recipeLoadWarning = ""; 
+                renderRecipeList(); 
                 alert("ファイルの読み込みに成功しました！");
             };
             reader.readAsText(file);
@@ -80,7 +77,6 @@ function renderRecipeList() {
     });
 }
 
-// --- 以下、鍛冶画面の処理（変更なし） ---
 function startSmithing(recipe) {
     currentRecipe = recipe;
     document.getElementById("current-recipe-name").textContent = recipe.name;
@@ -166,60 +162,145 @@ function setupSkills(level) {
     });
 }
 
+// ==========================================
+// AI（最適手）計算 (先読み ＆ 残り集中力評価)
+// ==========================================
 function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "計算中...";
+    aiBox.textContent = "計算中... (数手先と集中力を予測しています)";
+
+    // UIのフリーズを防ぐため非同期で処理
+    setTimeout(() => {
+        const SEARCH_DEPTH = 2; // 2手先まで読む
+        const bestMove = searchBestMove(gridState, currentTemp, currentFocus, SEARCH_DEPTH);
+
+        if (bestMove && bestMove.skill) {
+            const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+            let targetText = typeof bestMove.target === 'number' ? `マス${cellLetters[bestMove.target]}` : '全体';
+            
+            aiBox.innerHTML = `おすすめ: <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に打つ<br>
+            <span style="font-size:0.8em; color:#ccc;">(先読み評価スコア: ${bestMove.score.toFixed(1)})</span>`;
+        } else {
+            aiBox.innerHTML = `おすすめ: <strong>火力上げ</strong> または <strong>冷やし込み</strong> で温度を調整してください`;
+        }
+    }, 10);
+}
+
+function searchBestMove(state, temp, focus, depth) {
     let bestSkill = null;
-    let bestScore = -9999;
-    let bestTarget = 0;
+    let bestTarget = null;
+    let bestScore = -Infinity;
     
+    const level = parseInt(document.getElementById("artisan-level").value) || 80;
+    let critRateBase = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
+    critRateBase += 0.046; 
+
     SKILLS.forEach(skill => {
-        const level = parseInt(document.getElementById("artisan-level").value) || 80;
-        if (level < skill.reqLevel || currentFocus < skill.focus) return;
-        
-        gridState.forEach((state, index) => {
-            if (state.isLocked) return;
-            if (skill.type === "temp") return; 
-            
-            const dist = getDamageDistribution(currentTemp, skill.mult);
-            if (dist.length === 0) return;
-            
-            let successCount = 0;
-            let overCount = 0;
-            let critRate = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
-            critRate += 0.046; 
-            if (skill.isCritUp) critRate += (0.046 * 6); 
-            
-            dist.forEach(dmg => {
-                const valNormal = state.value + dmg;
-                if (valNormal >= state.min && valNormal <= state.max) successCount += (1 - critRate);
-                if (valNormal > state.max) overCount += (1 - critRate);
-                
-                const valCrit = state.value + (dmg * 2);
-                if (valCrit >= state.min && valCrit <= state.max) successCount += critRate;
-                if (valCrit > state.max) overCount += critRate;
+        if (level < skill.reqLevel || focus < skill.focus) return;
+
+        let targets = [];
+        if (skill.type === "temp") {
+            targets = [null]; 
+        } else {
+            state.forEach((s, i) => { 
+                if (!s.isLocked && s.value < s.max) targets.push(i); 
             });
+        }
+
+        targets.forEach(target => {
+            let expectedScore = 0;
+            const nextFocus = focus - skill.focus;
             
-            const probSuccess = successCount / dist.length;
-            const probOver = overCount / dist.length;
-            const score = (probSuccess * 100) - (probOver * 200);
-            
-            if (score > bestScore) {
-                bestScore = score; bestSkill = skill; bestTarget = index;
+            if (skill.type === "temp") {
+                let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + skill.tempChange));
+                expectedScore = evaluateBoardState(state, nextFocus); 
+                
+                if (depth > 1) {
+                    let nextBest = searchBestMove(state, nextTemp, nextFocus, depth - 1);
+                    if (nextBest) expectedScore += nextBest.score * 0.8; 
+                }
+            } else {
+                const dist = getDamageDistribution(temp, skill.mult);
+                if (dist.length === 0) return;
+
+                let currentCritRate = critRateBase;
+                if (skill.isCritUp) currentCritRate += (0.046 * 6);
+
+                const samples = [
+                    { val: dist[0], prob: 0.25 },
+                    { val: dist[Math.floor(dist.length / 2)], prob: 0.5 },
+                    { val: dist[dist.length - 1], prob: 0.25 }
+                ];
+
+                let totalScore = 0;
+
+                samples.forEach(sample => {
+                    let nextStateNorm = JSON.parse(JSON.stringify(state));
+                    nextStateNorm[target].value += sample.val;
+                    let scoreNorm = evaluateBoardState(nextStateNorm, nextFocus);
+                    
+                    if (depth > 1 && scoreNorm > -500) { 
+                        let nb = searchBestMove(nextStateNorm, temp - 50, nextFocus, depth - 1);
+                        if (nb) scoreNorm = (scoreNorm + nb.score) / 2;
+                    }
+
+                    let nextStateCrit = JSON.parse(JSON.stringify(state));
+                    nextStateCrit[target].value += (sample.val * 2);
+                    let scoreCrit = evaluateBoardState(nextStateCrit, nextFocus);
+                    
+                    if (depth > 1 && scoreCrit > -500) {
+                        let nb = searchBestMove(nextStateCrit, temp - 50, nextFocus, depth - 1);
+                        if (nb) scoreCrit = (scoreCrit + nb.score) / 2;
+                    }
+
+                    totalScore += (scoreNorm * (1 - currentCritRate) + scoreCrit * currentCritRate) * sample.prob;
+                });
+                
+                expectedScore = totalScore;
+            }
+
+            if (expectedScore > bestScore) {
+                bestScore = expectedScore;
+                bestSkill = skill;
+                bestTarget = target;
             }
         });
     });
-    
-    if (bestSkill && bestScore > -100) {
-        const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-        aiBox.innerHTML = `おすすめ: <strong>${bestSkill.name}</strong> を <strong>マス${cellLetters[bestTarget]}</strong> に打つ<br>
-        <span style="font-size:0.8em; color:#ccc;">(成功見込み: ${Math.max(0, bestScore).toFixed(1)}%)</span>`;
-    } else {
-        aiBox.innerHTML = `おすすめ: <strong>火力上げ</strong> または <strong>冷やし込み</strong> で温度を調整`;
-    }
+
+    return { skill: bestSkill, target: bestTarget, score: bestScore };
 }
 
-// --- 入力モーダル関連 ---
+// 盤面と残り集中力の評価
+function evaluateBoardState(state, currentFocus) {
+    let score = 0;
+    let totalShortfall = 0; // 目標に足りていない合計値
+    
+    state.forEach(s => {
+        if (s.value > s.max) {
+            score -= 1000; // はみ出しは特大ペナルティ
+        } else if (s.value >= s.min && s.value <= s.max) {
+            score += 150; // 成功ゾーン
+        } else {
+            let shortfall = s.min - s.value;
+            score -= shortfall; // 足りない距離だけマイナス
+            totalShortfall += shortfall;
+        }
+    });
+
+    // 集中力が残っているほどプラス評価（無駄なスキルを避ける）
+    score += currentFocus * 1.5;
+
+    // もし届いていないマスがあるのに集中力が枯渇しそうなら重いペナルティ
+    if (totalShortfall > 0 && currentFocus < 10) {
+        score -= 500;
+    }
+    
+    return score;
+}
+
+// ==========================================
+// 入力モーダル関連
+// ==========================================
 let activeSkill = null;
 let activeTarget = null;
 
