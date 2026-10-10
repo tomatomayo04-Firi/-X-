@@ -1,5 +1,5 @@
 // ==========================================
-// app.js - 本格AI ＆ メイン処理 (ループ撲滅・本会心判定版)
+// app.js - 本格AI ＆ メイン処理 (ループ撲滅・個別入力版)
 // ==========================================
 
 const style = document.createElement("style");
@@ -21,6 +21,9 @@ style.innerHTML = `
 .cell-lock-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; text-shadow: 0 0 5px #000; pointer-events: none; z-index: 10; }
 @keyframes pulse { 0% { box-shadow: 0 0 5px #ff4081; } 50% { box-shadow: 0 0 15px #ff4081; } 100% { box-shadow: 0 0 5px #ff4081; } }
 #action-guide { text-align: center; font-weight: bold; color: #00bcd4; margin-bottom: 10px; min-height: 20px; }
+.multi-input-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; background: #222; padding: 5px; border-radius: 4px; border: 1px solid #444; }
+.multi-input-row input[type="number"] { width: 60px; font-size: 1.2em; text-align: right; background: #111; color: white; border: 1px inset #555; }
+.multi-input-row label { color: #ffeb3b; font-size: 0.9em; display: flex; align-items: center; gap: 3px; cursor: pointer; }
 `;
 document.head.appendChild(style);
 
@@ -154,7 +157,6 @@ function renderGrid() {
         if (state.isLocked) {
             cellDiv.style.borderColor = "#ffeb3b";
             cellDiv.style.boxShadow = "0 0 10px #ffeb3b";
-            // ロック表示アイコン
             cellDiv.innerHTML += `<div class="cell-lock-icon">🔒</div>`;
         } 
         if (currentActionState === "skillSelected" && !state.isLocked) cellDiv.classList.add("targeting");
@@ -173,15 +175,9 @@ function renderGrid() {
         
         let currentIndex = targetIndex;
         cellDiv.addEventListener("click", (e) => {
-            if (state.isLocked) {
-                alert("このマスは本会心でロックされているため叩けません！");
-                return;
-            }
-            if (currentActionState === "skillSelected") {
-                handleCellClick(currentIndex, false, e);
-            } else {
-                alert("先に下のリストからスキルを選んでください。");
-            }
+            if (state.isLocked) { alert("このマスは本会心でロックされています！"); return; }
+            if (currentActionState === "skillSelected") handleCellClick(currentIndex, false, e);
+            else alert("先にスキルを選んでください。");
         });
         gridContainer.appendChild(cellDiv);
         targetIndex++;
@@ -251,7 +247,9 @@ function handleSkillSelect(skill) {
     }
 }
 
-// --- 🎯 マスタップ時のUI (はみ出し対応版) ---
+// ==========================================
+//UI ＆ 実行処理
+// ==========================================
 function handleCellClick(targetIndex, isAuto = false, event = null) {
     if (currentActionState !== "skillSelected" || !selectedSkill) return;
     activeTargets = getMultiHitTargets(selectedSkill.name, targetIndex);
@@ -261,12 +259,17 @@ function handleCellClick(targetIndex, isAuto = false, event = null) {
     const targetText = activeTargets.map(t => cellLetters[t]).join("・");
     document.getElementById("action-guide").textContent = `【${selectedSkill.name}】 対象: [${targetText}]`;
 
+    // 複数マスの場合は即座にフルモーダルを開く
+    if (activeTargets.length > 1) {
+        openFullInputModal();
+        return;
+    }
+
+    // 単体マスの場合は簡易フロートUIを表示
     const floatUI = document.getElementById("float-quick-input");
     floatUI.innerHTML = "";
-    
     const dist = getDamageDistribution(currentTemp, selectedSkill.mult);
 
-    // ① 通常ヒット枠
     let titleNorm = document.createElement("div");
     titleNorm.className = "float-title";
     titleNorm.textContent = "通常ヒット";
@@ -283,7 +286,6 @@ function handleCellClick(targetIndex, isAuto = false, event = null) {
     });
     floatUI.appendChild(btnGroupNorm);
 
-    // ② 会心ヒット枠
     let titleCrit = document.createElement("div");
     titleCrit.className = "float-title crit";
     titleCrit.innerHTML = "⚡ 会心ヒット";
@@ -301,7 +303,6 @@ function handleCellClick(targetIndex, isAuto = false, event = null) {
     });
     floatUI.appendChild(btnGroupCrit);
 
-    // ③ 手入力ボタン
     let manualBtn = document.createElement("button");
     manualBtn.className = "float-btn manual-btn";
     manualBtn.innerHTML = "手入力 (選択肢にない場合)";
@@ -312,24 +313,11 @@ function handleCellClick(targetIndex, isAuto = false, event = null) {
     floatUI.appendChild(manualBtn);
 
     floatUI.classList.remove("hidden");
-
-    // ★ ポップアップの表示位置自動調整 ★
     const cell = document.getElementById(`forge-cell-${targetIndex}`);
     const rect = cell.getBoundingClientRect();
-    
     let x = rect.left + window.scrollX + (rect.width / 2);
-    let y = 0;
-
-    // マスが画面上部に近すぎる場合は「下」に出す
-    if (rect.top < 250) {
-        y = rect.bottom + window.scrollY + 10;
-        floatUI.style.transform = "translate(-50%, 0)"; 
-    } else {
-        // 通常は「上」に出す
-        y = rect.top + window.scrollY - 10;
-        floatUI.style.transform = "translate(-50%, -100%)";
-    }
-    
+    let y = (rect.top < 250) ? (rect.bottom + window.scrollY + 10) : (rect.top + window.scrollY - 10);
+    floatUI.style.transform = (rect.top < 250) ? "translate(-50%, 0)" : "translate(-50%, -100%)";
     floatUI.style.left = `${x}px`;
     floatUI.style.top = `${y}px`;
 }
@@ -346,24 +334,12 @@ function executeTempSkill() {
     calculateAI();
 }
 
-// ★ 本会心・偽会心を見極める処理 ★
 function executeHitSkill(actualDamage, isCrit) {
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
     currentFocus -= selectedSkill.focus;
     
-    activeTargets.forEach(t => {
-        gridState[t].value += actualDamage; 
-        
-        // 会心でかつ成功ゾーンに収まった場合
-        if (isCrit && gridState[t].value >= gridState[t].min && gridState[t].value <= gridState[t].max) {
-            // 本会心のピタリ演出が出たかユーザーに確認する
-            const isTrueCrit = confirm(`【本会心確認】\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n\n・はい ＝ 本会心 (マスをロックします)\n・いいえ ＝ 偽会心 (後から叩けます)`);
-            
-            if (isTrueCrit) {
-                gridState[t].isLocked = true;
-            }
-        }
-    });
+    let t = activeTargets[0]; // 簡易UIは単体専用
+    processCellHit(t, actualDamage, isCrit);
     
     currentTemp -= (selectedSkill.specialTempDrop || 50);
     if (currentTemp < MIN_TEMP) currentTemp = MIN_TEMP;
@@ -373,67 +349,104 @@ function executeHitSkill(actualDamage, isCrit) {
     calculateAI();
 }
 
-// --- 手入力用フルモーダル ---
-function openFullInputModal() {
-    document.getElementById("modal-skill-info").textContent = `${selectedSkill.name} (詳細入力)`;
-    document.getElementById("manual-number-input").value = "";
-    document.getElementById("check-critical").checked = false;
+// 本会心確率の計算ロジック
+function calcTrueCritProb(startVal, addedVal, minZ, maxZ, temp, mult) {
+    if (addedVal % 2 !== 0) return "100% (奇数ダメージのため確定)";
+    const dist = getDamageDistribution(temp, mult);
+    if(dist.length === 0) return "不明";
     
-    const container = document.getElementById("numpad-inputs");
-    if(!container) {
+    const minCrit = dist[0] * 2;
+    if (startVal + minCrit > maxZ) return "100% (最小乱数でも枠を超えるため確定)";
+    
+    const maxCrit = dist[dist.length - 1] * 2;
+    let endVal = startVal + addedVal;
+    if (endVal === startVal + maxCrit) return "偽会心の可能性大 (最大乱数と同じ数値)";
+    
+    return "約50% (偽会心のリスクあり)";
+}
+
+// 1マスのダメージ処理と本会心判定
+function processCellHit(tIndex, actualDamage, isCrit) {
+    const startVal = gridState[tIndex].value;
+    gridState[tIndex].value += actualDamage; 
+    const endVal = gridState[tIndex].value;
+    
+    if (isCrit && endVal >= gridState[tIndex].min && endVal <= gridState[tIndex].max) {
+        const probText = calcTrueCritProb(startVal, actualDamage, gridState[tIndex].min, gridState[tIndex].max, currentTemp, selectedSkill.mult);
+        const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+        
+        const isTrueCrit = confirm(`マス[${cellLetters[tIndex]}]: 会心で成功ゾーンに入りました！\n\n【AI分析: ${probText}】\n\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n・はい ＝ 本会心としてロック\n・いいえ ＝ そのまま`);
+        if (isTrueCrit) gridState[tIndex].isLocked = true;
+    }
+}
+
+// --- 手入力用フルモーダル (複数マス個別入力対応) ---
+function openFullInputModal() {
+    document.getElementById("modal-skill-info").textContent = `${selectedSkill.name} (個別入力)`;
+    
+    let cont = document.getElementById("numpad-inputs");
+    if(!cont) {
         const oldInput = document.getElementById("manual-number-input");
-        const cont = document.createElement("div");
+        cont = document.createElement("div");
         cont.id = "numpad-inputs";
-        cont.style.display = "flex"; cont.style.gap = "5px"; cont.style.marginBottom = "10px";
+        cont.style.display = "flex"; cont.style.flexDirection = "column"; cont.style.gap = "5px"; cont.style.marginBottom = "10px";
         oldInput.parentNode.insertBefore(cont, oldInput);
         oldInput.remove();
+        document.getElementById("check-critical").parentNode.remove(); // 古い一括会心チェックボックスを削除
     }
-    const cont = document.getElementById("numpad-inputs");
     cont.innerHTML = "";
     
     const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
     activeTargets.forEach((tIndex, i) => {
-        const wrap = document.createElement("div"); wrap.style.flex = "1";
-        const label = document.createElement("div"); label.textContent = cellLetters[tIndex]; label.style.fontSize = "0.8em";
+        const row = document.createElement("div");
+        row.className = "multi-input-row";
+        
+        const label = document.createElement("div"); 
+        label.textContent = `マス${cellLetters[tIndex]}`; 
+        label.style.width = "45px"; label.style.fontWeight = "bold";
+        
         const input = document.createElement("input");
-        input.type = "number"; input.className = "multi-number-input"; input.id = `input-val-${i}`;
+        input.type = "number"; input.id = `input-val-${i}`;
         input.addEventListener("focus", () => window.currentActiveInput = input);
-        wrap.appendChild(label); wrap.appendChild(input);
-        cont.appendChild(wrap);
+        
+        const critLabel = document.createElement("label");
+        critLabel.innerHTML = `<input type="checkbox" id="check-crit-${i}"> 会心`;
+        
+        row.appendChild(label); row.appendChild(input); row.appendChild(critLabel);
+        cont.appendChild(row);
+        
         if (i === 0) { setTimeout(() => input.focus(), 10); window.currentActiveInput = input; }
     });
     document.getElementById("modal-input").classList.remove("hidden");
 }
 
 document.getElementById("btn-cancel-input").addEventListener("click", () => document.getElementById("modal-input").classList.add("hidden"));
+
 document.querySelectorAll(".num-key").forEach(key => {
     key.addEventListener("click", (e) => {
         const input = window.currentActiveInput;
         if (!input) return;
         if (e.target.classList.contains("clear")) input.value = "";
         else if (e.target.classList.contains("enter")) {
+            // バリデーション
             for (let i = 0; i < activeTargets.length; i++) {
-                if (isNaN(parseInt(document.getElementById(`input-val-${i}`).value))) { alert("全て入力してください"); return; }
+                if (isNaN(parseInt(document.getElementById(`input-val-${i}`).value))) { alert("全てのマスに数値を入力してください"); return; }
             }
-            const isCrit = document.getElementById("check-critical").checked;
             
             history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
             currentFocus -= selectedSkill.focus;
             
+            // 個別に処理
             activeTargets.forEach((tIndex, i) => {
                 let typedVal = parseInt(document.getElementById(`input-val-${i}`).value);
-                gridState[tIndex].value += typedVal;
-                
-                if (isCrit && gridState[tIndex].value >= gridState[tIndex].min && gridState[tIndex].value <= gridState[tIndex].max) {
-                     const isTrueCrit = confirm(`【本会心確認】\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n\n・はい ＝ 本会心 (マスをロックします)\n・いいえ ＝ 偽会心 (後から叩けます)`);
-                     if(isTrueCrit) gridState[tIndex].isLocked = true;
-                }
+                let isCrit = document.getElementById(`check-crit-${i}`).checked;
+                processCellHit(tIndex, typedVal, isCrit);
             });
+            
             currentTemp -= (selectedSkill.specialTempDrop || 50);
             if (currentTemp < MIN_TEMP) currentTemp = MIN_TEMP;
             
             document.getElementById("modal-input").classList.add("hidden");
-            
             updateStatusUI(); 
             resetSelectionState();
             calculateAI();
@@ -446,14 +459,13 @@ document.getElementById("btn-undo").addEventListener("click", () => {
     if (history.length === 0) return;
     const lastState = JSON.parse(history.pop());
     currentTemp = lastState.temp; currentFocus = lastState.focus; gridState = lastState.grid;
-    
     updateStatusUI(); 
     resetSelectionState(); 
     calculateAI();
 });
 
 // ==========================================
-// 完全数式ベースの「将棋型AI」 (ループ撲滅・博打対応版)
+// 完全数式ベースAI (ループ禁止・博打最適化)
 // ==========================================
 function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
@@ -492,8 +504,23 @@ function searchBestMove(state, temp, focus, depth) {
     let critRateBase = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
     critRateBase += 0.046; 
 
+    // ★ ループ防止のための目標温度計算 ★
+    let maxShortfall = 0;
+    state.forEach(s => {
+        if (!s.isLocked && s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
+    });
+    
+    let optimalTemp = 1000;
+    if (maxShortfall > 150) optimalTemp = 1600;
+    else if (maxShortfall > 90) optimalTemp = 1300;
+    else optimalTemp = 1000;
+
     SKILLS.forEach(skill => {
         if (level < skill.reqLevel || focus < skill.focus) return;
+
+        // ★ 完全なループ・無駄行動の禁止ルール ★
+        if (skill.name === "火力上げ" && temp >= optimalTemp) return; // 温度が十分なら絶対選ばない
+        if (skill.name === "冷やし込み" && temp <= optimalTemp) return; // 十分冷えていたら絶対選ばない
 
         let startIndices = [0];
         if (skill.type !== "temp" && skill.type !== "random") {
@@ -510,7 +537,8 @@ function searchBestMove(state, temp, focus, depth) {
                 let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + skill.tempChange));
                 expectedScore = evaluateBoardStateMath(state, nextTemp, nextFocus); 
                 
-                // 消費集中力ペナルティ (-1500) は evaluateBoardStateMath の中で相殺されるか判定される
+                // 温度操作の追加ペナルティ (意味のないターン消費を嫌う)
+                expectedScore -= 2000;
                 
                 if (depth > 1) {
                     let nextBest = searchBestMove(state, nextTemp, nextFocus, depth - 1);
@@ -560,7 +588,7 @@ function searchBestMove(state, temp, focus, depth) {
                         }
                     }
 
-                    // 期待値合成：会心率が高ければ「はみ出し」のマイナス(scoreNorm)を、会心の特大プラス(scoreCrit)で覆せる
+                    // 博打期待値の合成
                     totalScore += (scoreNorm * (1 - currentCritRate) + scoreCrit * currentCritRate) * sample.prob;
                 });
                 expectedScore = totalScore;
@@ -575,57 +603,39 @@ function searchBestMove(state, temp, focus, depth) {
     return { skill: bestSkill, targets: bestTargets, score: bestScore };
 }
 
-// ----------------------------------------------------
-// 【AIの心臓部】 放物線グラフ計算 ＆ リスク管理
-// ----------------------------------------------------
 function evaluateBoardStateMath(state, currentTemp, currentFocus) {
     let score = 0;
-    let maxShortfall = 0;
     let isAllDone = true;
     
     state.forEach(s => {
-        if (!s.isLocked && s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
-        
         if (s.isLocked) {
             score += 100000; 
         } else if (s.value > s.max) {
-            // ★博打打ち対応★ 
-            // はみ出しのペナルティを -30000 に緩和。
-            // これにより「会心が出れば +50000、通常ではみ出しても -30000」となり、会心率が高ければ博打を打ちます。
+            // 博打調整: はみ出しペナルティを -30000 に。
+            // これにより、会心が出た時の特大プラス(+100000)と相殺され、会心率が高ければ「ねらい打ち」の博打を打ちます。
             score -= 30000; 
             isAllDone = false;
         } else if (s.value >= s.min && s.value <= s.max) {
-            score += 50000; 
+            score += 30000; 
             const center = (s.min + s.max) / 2;
             score -= Math.abs(s.value - center) * 10;
         } else {
             isAllDone = false;
             let shortfall = s.min - s.value;
-            score -= shortfall * 100;
+            score -= shortfall * 50;
 
             const dist = getDamageDistribution(currentTemp, 1.0);
             if(dist.length > 0) {
                 const maxNorm = dist[dist.length - 1];
                 const minCrit = dist[0] * 2;
                 if (shortfall > maxNorm && (s.max - s.value) >= minCrit) {
-                    score += 8000; // 完璧な寄せ（特大ボーナス）
+                    score += 8000; // 本会心セットアップ
                 }
             }
         }
     });
 
     if (isAllDone) score += 500000; 
-
-    // ★ループ撲滅★ 「最適な目標温度」をパラボラ状に設定
-    let optimalTemp = 1000;
-    if (maxShortfall > 150) optimalTemp = 2000;
-    else if (maxShortfall > 100) optimalTemp = 1600;
-    else if (maxShortfall > 60) optimalTemp = 1300;
-    else optimalTemp = 1000;
-    
-    // 現在の温度が目標から離れているほどマイナス（火力上げをすると近づくのでスコアがプラスに転じる）
-    score -= Math.abs(currentTemp - optimalTemp) * 10;
-
     score += currentFocus * 150;
     return score;
 }
