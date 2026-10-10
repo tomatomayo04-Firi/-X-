@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ドラクエ10 防具鍛冶シミュレーター</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- ▼▼ レシピ選択画面 ▼▼ -->
+        <div id="scene-select" class="scene active">
+            <h1>防具鍛冶 練習＆最適手ツール</h1>
+            
+            <div class="settings-panel">
+                <label>職人レベル: <input type="number" id="artisan-level" value="80" min="1" max="80"></label>
+                <label><input type="checkbox" id="has-kotsu" checked> コツを掴んでいる (会心+1%)</label>
+                <label>ハンマー: 
+                    <select id="hammer-type">
+                        <option value="光3">光の鍛冶ハンマー★3 (集中+45 / 会心+4.6%)</option>
+                        <!-- 必要に応じて追加 -->
+                    </select>
+                </label>
+            </div>
+
+            <div class="filter-panel">
+                <label>部位: 
+                    <select id="filter-type">
+                        <option value="all">すべて</option>
+                        <option value="アタマ">アタマ</option>
+                        <option value="からだ上">からだ上</option>
+                        <option value="からだ下">からだ下</option>
+                        <option value="ウデ">ウデ</option>
+                        <option value="足">足</option>
+                        <option value="小盾">小盾</option>
+                        <option value="大盾">大盾</option>
+                    </select>
+                </label>
+                <label>地金特性: 
+                    <select id="filter-jigane">
+                        <option value="all">すべて</option>
+                        <option value="通常地金">通常</option>
+                        <option value="戻り地金">戻り</option>
+                        <option value="倍半地金">倍半</option>
+                        <option value="集中変化地金">集中変化</option>
+                        <option value="光地金">光</option>
+                    </select>
+                </label>
+                <label><input type="checkbox" id="filter-crystal"> 人気結晶装備</label>
+                <button id="btn-load-recipes">レシピデータを再読み込み</button>
+            </div>
+
+            <div class="recipe-list-container">
+                <ul id="recipe-list">
+                    <!-- JavaScriptで読み込んだレシピがここに入ります -->
+                    <li class="loading">レシピデータを読み込み中...</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- ▼▼ 鍛冶画面 ▼▼ -->
+        <div id="scene-smithing" class="scene">
+            <div class="header-status">
+                <button id="btn-back">◀ レシピ選択へ戻る</button>
+                <h2 id="current-recipe-name">アイテム名</h2>
+                <div class="status-bar">
+                    <span class="jigane-type" id="display-jigane">地金タイプ</span>
+                    <span>温度: <strong id="current-temp">1000</strong>℃</span>
+                    <span>集中力: <strong id="current-focus">200</strong> / <span id="max-focus">200</span></span>
+                </div>
+            </div>
+
+            <div class="main-smithing-area">
+                <!-- マス目表示エリア -->
+                <div class="grid-container" id="smithing-grid">
+                    <!-- JSで部位に応じたマス(A~H)を生成 -->
+                </div>
+
+                <!-- おすすめ手ナビゲーション -->
+                <div class="recommendation-panel">
+                    <h3>💡 AIおすすめの次の一手</h3>
+                    <div id="ai-suggestion" class="suggestion-box">計算中...</div>
+                    <button id="btn-auto-execute" class="btn-primary">おすすめを実行 (数値選択へ)</button>
+                </div>
+            </div>
+
+            <!-- スキル選択・入力エリア -->
+            <div class="action-panel">
+                <div class="skill-list" id="skill-list">
+                    <!-- JSでレベルに応じたスキルボタンを生成 -->
+                </div>
+                
+                <div class="special-actions">
+                    <button id="btn-hissatsu" class="btn-hissatsu" disabled>ひっさつ (へパイトスの炎)</button>
+                    <button id="btn-focus-recover" class="btn-recover" disabled>まれに集中回復 (+30)</button>
+                    <button id="btn-undo" class="btn-undo">1手戻す</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数値入力用ポップアップ (ミニキーパッド) -->
+    <div id="modal-input" class="modal hidden">
+        <div class="modal-content">
+            <h3>実際に出た数値を入力</h3>
+            <p id="modal-skill-info">使用スキル: たたく</p>
+            <div class="quick-select" id="quick-select-numbers">
+                <!-- JSで出うる数値の候補ボタンを生成 -->
+            </div>
+            
+            <div class="toggle-critical">
+                <label><input type="checkbox" id="check-critical"> 会心が出た！</label>
+            </div>
+
+            <h4>手動入力</h4>
+            <div class="numpad">
+                <input type="number" id="manual-number-input" readonly>
+                <div class="numpad-keys">
+                    <button class="num-key">7</button><button class="num-key">8</button><button class="num-key">9</button>
+                    <button class="num-key">4</button><button class="num-key">5</button><button class="num-key">6</button>
+                    <button class="num-key">1</button><button class="num-key">2</button><button class="num-key">3</button>
+                    <button class="num-key clear">C</button><button class="num-key">0</button><button class="num-key enter" id="btn-submit-number">決定</button>
+                </div>
+            </div>
+            <button id="btn-cancel-input" class="btn-cancel">キャンセル</button>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
