@@ -9,25 +9,47 @@ let maxFocus = 0;
 let gridState = []; 
 let history = []; 
 
-// --- 画面初期化とレシピリストの表示 ---
 document.addEventListener("DOMContentLoaded", async () => {
-    await loadRecipeData();
-    renderRecipeList();
-
-    document.getElementById("filter-type").addEventListener("change", renderRecipeList);
-    document.getElementById("filter-jigane").addEventListener("change", renderRecipeList);
-    document.getElementById("filter-crystal").addEventListener("change", renderRecipeList);
-    
-    document.getElementById("btn-load-recipes").addEventListener("click", async () => {
-        document.getElementById("recipe-list").innerHTML = '<li class="loading">再読み込み中...</li>';
+    try {
         await loadRecipeData();
         renderRecipeList();
-    });
+        
+        document.getElementById("filter-type").addEventListener("change", renderRecipeList);
+        document.getElementById("filter-jigane").addEventListener("change", renderRecipeList);
+        document.getElementById("filter-crystal").addEventListener("change", renderRecipeList);
+        
+        document.getElementById("btn-load-recipes").addEventListener("click", async () => {
+            document.getElementById("recipe-list").innerHTML = '<li class="loading">再読み込み中...</li>';
+            await loadRecipeData();
+            renderRecipeList();
+        });
+    } catch (e) {
+        document.getElementById("recipe-list").innerHTML = `<li style="color:red">スクリプト実行エラー: ${e.message}</li>`;
+    }
 });
 
 function renderRecipeList() {
     const listElement = document.getElementById("recipe-list");
-    listElement.innerHTML = ""; 
+    
+    // エラーがある場合は一番上にファイルアップロードボタン付きの警告を表示
+    listElement.innerHTML = window.recipeLoadWarning || ""; 
+    
+    // 手動ファイル読み込みイベントを付与
+    const fileInput = document.getElementById("local-file-input");
+    if (fileInput) {
+        fileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                parseRecipeText(evt.target.result);
+                window.recipeLoadWarning = ""; // 読み込み成功したら警告を消す
+                renderRecipeList(); // リストを再描画
+                alert("ファイルの読み込みに成功しました！");
+            };
+            reader.readAsText(file);
+        });
+    }
 
     const filterType = document.getElementById("filter-type").value;
     const filterJigane = document.getElementById("filter-jigane").value;
@@ -40,8 +62,8 @@ function renderRecipeList() {
         return true;
     });
 
-    if (filteredRecipes.length === 0) {
-        listElement.innerHTML = "<li>条件に一致するレシピがありません。</li>";
+    if (filteredRecipes.length === 0 && !window.recipeLoadWarning) {
+        listElement.innerHTML += "<li>条件に一致するレシピがありません。</li>";
         return;
     }
 
@@ -53,15 +75,12 @@ function renderRecipeList() {
                 ( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} ${recipe.isCrystal ? ' / 💎結晶' : ''} )
             </span>
         `;
-        // タップで鍛冶画面へ移行
-        li.addEventListener("click", () => {
-            startSmithing(recipe);
-        });
+        li.addEventListener("click", () => startSmithing(recipe));
         listElement.appendChild(li);
     });
 }
 
-// --- 鍛冶画面の処理 ---
+// --- 以下、鍛冶画面の処理（変更なし） ---
 function startSmithing(recipe) {
     currentRecipe = recipe;
     document.getElementById("current-recipe-name").textContent = recipe.name;
@@ -75,12 +94,7 @@ function startSmithing(recipe) {
     
     gridState = [];
     recipe.targets.forEach(target => {
-        gridState.push({
-            value: 0,
-            min: target.min,
-            max: target.max,
-            isLocked: false 
-        });
+        gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false });
     });
     
     history = [];
@@ -130,11 +144,8 @@ function renderGrid() {
             <div class="gauge-text">${state.value}</div>
         `;
         
-        // クロージャのスコープ問題を避けるため let でインデックスを固定
         let currentIndex = targetIndex;
-        cellDiv.addEventListener("click", () => {
-            openInputModal("たたく", currentIndex);
-        });
+        cellDiv.addEventListener("click", () => openInputModal("たたく", currentIndex));
         
         gridContainer.appendChild(cellDiv);
         targetIndex++;
@@ -144,25 +155,20 @@ function renderGrid() {
 function setupSkills(level) {
     const skillList = document.getElementById("skill-list");
     skillList.innerHTML = "";
-    
     SKILLS.forEach(skill => {
         if (level >= skill.reqLevel) {
             const btn = document.createElement("button");
             btn.className = "skill-btn";
             btn.textContent = `${skill.name} (${skill.focus})`;
-            btn.addEventListener("click", () => {
-                openInputModal(skill.name, 0); 
-            });
+            btn.addEventListener("click", () => openInputModal(skill.name, 0));
             skillList.appendChild(btn);
         }
     });
 }
 
-// --- AI（最適手）計算 ---
 function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
     aiBox.textContent = "計算中...";
-    
     let bestSkill = null;
     let bestScore = -9999;
     let bestTarget = 0;
@@ -180,9 +186,7 @@ function calculateAI() {
             
             let successCount = 0;
             let overCount = 0;
-            
-            let critRate = 0.01; 
-            if (document.getElementById("has-kotsu").checked) critRate += 0.01;
+            let critRate = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
             critRate += 0.046; 
             if (skill.isCritUp) critRate += (0.046 * 6); 
             
@@ -201,9 +205,7 @@ function calculateAI() {
             const score = (probSuccess * 100) - (probOver * 200);
             
             if (score > bestScore) {
-                bestScore = score;
-                bestSkill = skill;
-                bestTarget = index;
+                bestScore = score; bestSkill = skill; bestTarget = index;
             }
         });
     });
@@ -211,20 +213,19 @@ function calculateAI() {
     if (bestSkill && bestScore > -100) {
         const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
         aiBox.innerHTML = `おすすめ: <strong>${bestSkill.name}</strong> を <strong>マス${cellLetters[bestTarget]}</strong> に打つ<br>
-        <span style="font-size:0.8em; color:#ccc;">(成功確率見込み: ${Math.max(0, bestScore).toFixed(1)}%)</span>`;
+        <span style="font-size:0.8em; color:#ccc;">(成功見込み: ${Math.max(0, bestScore).toFixed(1)}%)</span>`;
     } else {
         aiBox.innerHTML = `おすすめ: <strong>火力上げ</strong> または <strong>冷やし込み</strong> で温度を調整`;
     }
 }
 
-// --- 入力モーダルと数値反映 ---
+// --- 入力モーダル関連 ---
 let activeSkill = null;
 let activeTarget = null;
 
 function openInputModal(skillName, targetIndex) {
     activeSkill = SKILLS.find(s => s.name === skillName);
     activeTarget = targetIndex;
-    
     document.getElementById("modal-skill-info").textContent = `使用スキル: ${skillName} (対象: ${targetIndex + 1}マス目)`;
     document.getElementById("manual-number-input").value = "";
     document.getElementById("check-critical").checked = false;
@@ -237,20 +238,14 @@ function openInputModal(skillName, targetIndex) {
             const btn = document.createElement("button");
             btn.className = "quick-btn";
             btn.textContent = dmg;
-            btn.addEventListener("click", () => {
-                document.getElementById("manual-number-input").value = dmg;
-            });
+            btn.addEventListener("click", () => document.getElementById("manual-number-input").value = dmg);
             quickBox.appendChild(btn);
         });
     }
-    
     document.getElementById("modal-input").classList.remove("hidden");
 }
 
-document.getElementById("btn-cancel-input").addEventListener("click", () => {
-    document.getElementById("modal-input").classList.add("hidden");
-});
-
+document.getElementById("btn-cancel-input").addEventListener("click", () => document.getElementById("modal-input").classList.add("hidden"));
 document.getElementById("btn-back").addEventListener("click", () => {
     document.getElementById("scene-smithing").classList.remove("active");
     document.getElementById("scene-select").classList.add("active");
@@ -259,34 +254,24 @@ document.getElementById("btn-back").addEventListener("click", () => {
 document.querySelectorAll(".num-key").forEach(key => {
     key.addEventListener("click", (e) => {
         const input = document.getElementById("manual-number-input");
-        if (e.target.classList.contains("clear")) {
-            input.value = "";
-        } else if (e.target.classList.contains("enter")) {
-            submitAction();
-        } else {
-            input.value += e.target.textContent;
-        }
+        if (e.target.classList.contains("clear")) input.value = "";
+        else if (e.target.classList.contains("enter")) submitAction();
+        else input.value += e.target.textContent;
     });
 });
 
 function submitAction() {
     const val = parseInt(document.getElementById("manual-number-input").value);
-    if (isNaN(val) && activeSkill.type !== "temp") {
-        alert("数値を入力してください");
-        return;
-    }
+    if (isNaN(val) && activeSkill.type !== "temp") { alert("数値を入力してください"); return; }
     
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
-    
     currentFocus -= activeSkill.focus;
     
     if (activeSkill.type === "temp") {
         currentTemp += activeSkill.tempChange;
     } else {
         let dmg = val;
-        const isCrit = document.getElementById("check-critical").checked;
-        if (isCrit) dmg = val * 2; 
-        
+        if (document.getElementById("check-critical").checked) dmg = val * 2; 
         gridState[activeTarget].value += dmg;
         currentTemp -= (activeSkill.specialTempDrop || 50);
     }
@@ -303,10 +288,6 @@ function submitAction() {
 document.getElementById("btn-undo").addEventListener("click", () => {
     if (history.length === 0) return;
     const lastState = JSON.parse(history.pop());
-    currentTemp = lastState.temp;
-    currentFocus = lastState.focus;
-    gridState = lastState.grid;
-    updateStatusUI();
-    renderGrid();
-    calculateAI();
+    currentTemp = lastState.temp; currentFocus = lastState.focus; gridState = lastState.grid;
+    updateStatusUI(); renderGrid(); calculateAI();
 });
