@@ -191,17 +191,37 @@ body {
 .btn-undo { background: #795548; color: white; padding: 10px; border: none; border-radius: 5px;}
 
 /* モーダル (キーパッド) */
+/* --- スモールポップアップ用のUI上書き --- */
 .modal {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.3); /* 背景を薄くして画面移動感をなくす */
     display: flex; justify-content: center; align-items: center;
     z-index: 1000;
+    backdrop-filter: blur(2px);
 }
 .modal.hidden { display: none; }
 .modal-content {
-    background: var(--panel-bg); padding: 20px; border-radius: 10px;
-    width: 90%; max-width: 400px; text-align: center;
+    background: #2d2d2d; padding: 15px; border-radius: 12px;
+    width: 280px; /* コンパクトに */
+    box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+    border: 2px solid var(--primary-color);
+    text-align: center;
+    animation: popIn 0.2s ease-out;
 }
+@keyframes popIn {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+#modal-skill-info { font-size: 0.9em; margin-bottom: 10px; color: #aaa; }
+.quick-select { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-bottom: 10px; }
+.quick-btn { padding: 6px 12px; font-size: 1.1em; background: #444; border-radius: 4px; border: 1px solid #555; }
+.numpad input { width: 100%; font-size: 1.8em; text-align: center; margin-bottom: 10px; padding: 5px; background: #111; color: #fff; border: 1px inset #555; border-radius: 4px; }
+.numpad-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.num-key { padding: 10px; font-size: 1.2em; background: #333; border: 1px solid #555; border-radius: 6px; cursor: pointer; }
+.num-key:active { background: #555; }
+.num-key.enter { background: var(--success-color); color: white; font-weight: bold; }
+.num-key.clear { background: var(--danger-color); color: white; font-weight: bold; }
+.btn-cancel { margin-top: 10px; padding: 8px; width: 100%; background: #555; color: white; border: none; border-radius: 4px; cursor: pointer; }
 .quick-select {
     display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 15px;
 }
