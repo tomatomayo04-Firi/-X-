@@ -1,5 +1,5 @@
 // ==========================================
-// app.js - アプリケーションのメイン処理
+// app.js - 職人AI ＆ メイン処理
 // ==========================================
 
 let currentRecipe = null;
@@ -17,14 +17,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         document.getElementById("filter-type").addEventListener("change", renderRecipeList);
         document.getElementById("filter-jigane").addEventListener("change", renderRecipeList);
         document.getElementById("filter-crystal").addEventListener("change", renderRecipeList);
-        
         document.getElementById("btn-load-recipes").addEventListener("click", async () => {
             document.getElementById("recipe-list").innerHTML = '<li class="loading">再読み込み中...</li>';
             await loadRecipeData();
             renderRecipeList();
         });
     } catch (e) {
-        document.getElementById("recipe-list").innerHTML = `<li style="color:red">スクリプト実行エラー: ${e.message}</li>`;
+        document.getElementById("recipe-list").innerHTML = `<li style="color:red">エラー: ${e.message}</li>`;
     }
 });
 
@@ -42,7 +41,7 @@ function renderRecipeList() {
                 parseRecipeText(evt.target.result);
                 window.recipeLoadWarning = ""; 
                 renderRecipeList(); 
-                alert("ファイルの読み込みに成功しました！");
+                alert("読み込み成功");
             };
             reader.readAsText(file);
         });
@@ -60,18 +59,13 @@ function renderRecipeList() {
     });
 
     if (filteredRecipes.length === 0 && !window.recipeLoadWarning) {
-        listElement.innerHTML += "<li>条件に一致するレシピがありません。</li>";
+        listElement.innerHTML += "<li>レシピが見つかりません。</li>";
         return;
     }
 
     filteredRecipes.forEach(recipe => {
         const li = document.createElement("li");
-        li.innerHTML = `
-            <strong>${recipe.name}</strong> 
-            <span class="recipe-meta">
-                ( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} ${recipe.isCrystal ? ' / 💎結晶' : ''} )
-            </span>
-        `;
+        li.innerHTML = `<strong>${recipe.name}</strong> <span class="recipe-meta">( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} ${recipe.isCrystal ? ' / 💎' : ''} )</span>`;
         li.addEventListener("click", () => startSmithing(recipe));
         listElement.appendChild(li);
     });
@@ -128,6 +122,7 @@ function renderGrid() {
         const state = gridState[targetIndex];
         const cellDiv = document.createElement("div");
         cellDiv.className = "forge-cell";
+        if(state.isLocked) cellDiv.style.borderColor = "#ffeb3b"; // 本会心ロック時の演出
         
         const absoluteMax = state.max * 1.2;
         const fillHeight = Math.min(100, (state.value / absoluteMax) * 100);
@@ -136,7 +131,7 @@ function renderGrid() {
         
         cellDiv.innerHTML = `
             <div class="gauge-target-zone" style="bottom: ${targetBottom}%; height: ${targetHeight}%;"></div>
-            <div class="gauge-fill" style="height: ${fillHeight}%;"></div>
+            <div class="gauge-fill" style="height: ${fillHeight}%; ${state.isLocked ? 'background: #ffeb3b;' : ''}"></div>
             <div class="gauge-text">${state.value}</div>
         `;
         
@@ -163,27 +158,40 @@ function setupSkills(level) {
 }
 
 // ==========================================
-// AI（最適手）計算 (先読み ＆ 残り集中力評価)
+// 職人AI (本会心セットアップ・期待値計算)
 // ==========================================
 function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "計算中... (数手先と集中力を予測しています)";
+    aiBox.textContent = "AI思考中... (本会心率・冷やし込み期待値等を計算)";
 
-    // UIのフリーズを防ぐため非同期で処理
     setTimeout(() => {
-        const SEARCH_DEPTH = 2; // 2手先まで読む
+        const SEARCH_DEPTH = 2; 
         const bestMove = searchBestMove(gridState, currentTemp, currentFocus, SEARCH_DEPTH);
 
         if (bestMove && bestMove.skill) {
             const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
             let targetText = typeof bestMove.target === 'number' ? `マス${cellLetters[bestMove.target]}` : '全体';
             
-            aiBox.innerHTML = `おすすめ: <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に打つ<br>
-            <span style="font-size:0.8em; color:#ccc;">(先読み評価スコア: ${bestMove.score.toFixed(1)})</span>`;
+            aiBox.innerHTML = `
+                <div style="font-size:1.1em; margin-bottom:5px;">💡 <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に使用</div>
+                <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
+                【AIの狙い】<br>
+                ${getReasoningText(bestMove, gridState)}<br>
+                (期待値スコア: ${Math.floor(bestMove.score)})
+                </div>
+            `;
         } else {
-            aiBox.innerHTML = `おすすめ: <strong>火力上げ</strong> または <strong>冷やし込み</strong> で温度を調整してください`;
+            aiBox.innerHTML = `おすすめの手が見つかりません。`;
         }
     }, 10);
+}
+
+function getReasoningText(move, state) {
+    if (move.skill.name === "火力上げ") return "序盤の進行、または次のねらい打ちに向けた火力確保です。";
+    if (move.skill.name === "冷やし込み") return "現在の温度でははみ出しリスクが高いため、温度を下げてから調整・ねらい打ちをする期待値が高いです。";
+    if (move.skill.isCritUp) return "本会心（または安全な偽会心）の期待値が最も高いベストな寄せ状態です！";
+    if (move.skill.name === "てかげん打ち") return "会心を狙わずとも、安全に成功ゲージの中心に寄せる確率が高いです。";
+    return "ゲージを効率よく進めつつ、はみ出しリスクを抑える手です。";
 }
 
 function searchBestMove(state, temp, focus, depth) {
@@ -193,18 +201,15 @@ function searchBestMove(state, temp, focus, depth) {
     
     const level = parseInt(document.getElementById("artisan-level").value) || 80;
     let critRateBase = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
-    critRateBase += 0.046; 
+    critRateBase += 0.046; // 道具会心
 
     SKILLS.forEach(skill => {
         if (level < skill.reqLevel || focus < skill.focus) return;
 
-        let targets = [];
-        if (skill.type === "temp") {
-            targets = [null]; 
-        } else {
-            state.forEach((s, i) => { 
-                if (!s.isLocked && s.value < s.max) targets.push(i); 
-            });
+        let targets = [null];
+        if (skill.type !== "temp") {
+            targets = [];
+            state.forEach((s, i) => { if (!s.isLocked && s.value < s.max) targets.push(i); });
         }
 
         targets.forEach(target => {
@@ -213,19 +218,24 @@ function searchBestMove(state, temp, focus, depth) {
             
             if (skill.type === "temp") {
                 let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + skill.tempChange));
-                expectedScore = evaluateBoardState(state, nextFocus); 
+                expectedScore = evaluateBoardState(state, nextTemp, nextFocus); 
                 
+                // 冷やし込み・火力上げ後の次の一手を探索
                 if (depth > 1) {
                     let nextBest = searchBestMove(state, nextTemp, nextFocus, depth - 1);
-                    if (nextBest) expectedScore += nextBest.score * 0.8; 
+                    if (nextBest) expectedScore += (nextBest.score * 0.9); // 割引して加算
                 }
             } else {
                 const dist = getDamageDistribution(temp, skill.mult);
                 if (dist.length === 0) return;
 
                 let currentCritRate = critRateBase;
-                if (skill.isCritUp) currentCritRate += (0.046 * 6);
+                if (skill.isCritUp) {
+                    // ねらい打ち等の会心加算 (会心率UPターンならさらに倍率がかかるが今回は通常時計算)
+                    currentCritRate += (0.046 * 6); 
+                }
 
+                // 全パターン計算(最小・中央・最大の代表値で軽量化)
                 const samples = [
                     { val: dist[0], prob: 0.25 },
                     { val: dist[Math.floor(dist.length / 2)], prob: 0.5 },
@@ -235,20 +245,35 @@ function searchBestMove(state, temp, focus, depth) {
                 let totalScore = 0;
 
                 samples.forEach(sample => {
+                    // ① 通常ヒット (会心出ず)
                     let nextStateNorm = JSON.parse(JSON.stringify(state));
                     nextStateNorm[target].value += sample.val;
-                    let scoreNorm = evaluateBoardState(nextStateNorm, nextFocus);
+                    let scoreNorm = evaluateBoardState(nextStateNorm, temp - 50, nextFocus);
                     
                     if (depth > 1 && scoreNorm > -500) { 
                         let nb = searchBestMove(nextStateNorm, temp - 50, nextFocus, depth - 1);
                         if (nb) scoreNorm = (scoreNorm + nb.score) / 2;
                     }
 
+                    // ② 会心ヒット
                     let nextStateCrit = JSON.parse(JSON.stringify(state));
-                    nextStateCrit[target].value += (sample.val * 2);
-                    let scoreCrit = evaluateBoardState(nextStateCrit, nextFocus);
+                    let critDmg = sample.val * 2;
+                    let newValue = nextStateCrit[target].value + critDmg;
                     
-                    if (depth > 1 && scoreCrit > -500) {
+                    // 本会心判定: 会心ダメージで「基準値（成功ゲージの中心付近と仮定）」をぶち抜けるならピタリと止まる
+                    let targetCenter = (nextStateCrit[target].min + nextStateCrit[target].max) / 2;
+                    if (newValue >= targetCenter && nextStateCrit[target].value + (dist[0]*2) <= nextStateCrit[target].max) {
+                        // 最小会心でもオーバーせず、最大会心で基準値に届くなら、ゲーム仕様上ロックされやすい（本会心）
+                        nextStateCrit[target].value = Math.floor(targetCenter);
+                        nextStateCrit[target].isLocked = true;
+                    } else {
+                        // 届かない、またははみ出す場合はそのまま加算（偽会心または焦げ）
+                        nextStateCrit[target].value = newValue;
+                    }
+
+                    let scoreCrit = evaluateBoardState(nextStateCrit, temp - 50, nextFocus);
+                    
+                    if (depth > 1 && scoreCrit > -500 && !nextStateCrit[target].isLocked) {
                         let nb = searchBestMove(nextStateCrit, temp - 50, nextFocus, depth - 1);
                         if (nb) scoreCrit = (scoreCrit + nb.score) / 2;
                     }
@@ -260,9 +285,7 @@ function searchBestMove(state, temp, focus, depth) {
             }
 
             if (expectedScore > bestScore) {
-                bestScore = expectedScore;
-                bestSkill = skill;
-                bestTarget = target;
+                bestScore = expectedScore; bestSkill = skill; bestTarget = target;
             }
         });
     });
@@ -270,36 +293,59 @@ function searchBestMove(state, temp, focus, depth) {
     return { skill: bestSkill, target: bestTarget, score: bestScore };
 }
 
-// 盤面と残り集中力の評価
-function evaluateBoardState(state, currentFocus) {
+// 盤面評価 (職人の「寄せ」理論を反映)
+function evaluateBoardState(state, currentTemp, currentFocus) {
     let score = 0;
-    let totalShortfall = 0; // 目標に足りていない合計値
+    let totalShortfall = 0; 
     
     state.forEach(s => {
-        if (s.value > s.max) {
-            score -= 1000; // はみ出しは特大ペナルティ
+        if (s.isLocked) {
+            score += 2000; // 本会心によるロックは最高評価
+        } else if (s.value > s.max) {
+            score -= 3000; // はみ出しは絶対回避
         } else if (s.value >= s.min && s.value <= s.max) {
-            score += 150; // 成功ゾーン
+            score += 300; // 成功ゾーン
+            // 中心に近いほど誤差が少ないためプラス
+            const center = (s.min + s.max) / 2;
+            score -= Math.abs(s.value - center);
         } else {
-            let shortfall = s.min - s.value;
-            score -= shortfall; // 足りない距離だけマイナス
-            totalShortfall += shortfall;
+            let shortfallToMin = s.min - s.value;
+            totalShortfall += shortfallToMin;
+
+            // --- 寄せ（ねらい打ちセットアップ）の評価 ---
+            // 現在の温度の最大ダメージ・最小ダメージを取得
+            const dist = getDamageDistribution(currentTemp, 1.0);
+            if(dist.length > 0) {
+                const maxNorm = dist[dist.length - 1];
+                const minCrit = dist[0] * 2;
+                
+                // 「通常ヒットでは絶対にはみ出さない（成功ゾーンにも入らない＝安全）」
+                // かつ「会心が出れば成功ゾーンに確定で入る」位置を高く評価
+                if (shortfallToMin > maxNorm && (s.max - s.value) >= minCrit) {
+                    score += 150; // 完璧な寄せ状態
+                } else if (shortfallToMin <= maxNorm) {
+                    // 通常ヒットで成功ゾーンに入ってしまう（偽会心リスク大）は少しマイナス
+                    score -= 50; 
+                }
+            }
+            score -= shortfallToMin; // 基本は遠いほどマイナス
         }
     });
 
-    // 集中力が残っているほどプラス評価（無駄なスキルを避ける）
-    score += currentFocus * 1.5;
-
-    // もし届いていないマスがあるのに集中力が枯渇しそうなら重いペナルティ
-    if (totalShortfall > 0 && currentFocus < 10) {
-        score -= 500;
+    // 序盤の火力上げ促進：全体的にまだ遠い場合は高い温度を評価
+    if (totalShortfall > 150) {
+        score += (currentTemp / 10);
     }
+
+    score += currentFocus * 2;
+    // ねらい打ち（16）が打てないほどカツカツならペナルティ
+    if (totalShortfall > 0 && currentFocus < 16) score -= 1500; 
     
     return score;
 }
 
 // ==========================================
-// 入力モーダル関連
+// 小型ポップアップUI ＆ 入力処理
 // ==========================================
 let activeSkill = null;
 let activeTarget = null;
@@ -307,7 +353,7 @@ let activeTarget = null;
 function openInputModal(skillName, targetIndex) {
     activeSkill = SKILLS.find(s => s.name === skillName);
     activeTarget = targetIndex;
-    document.getElementById("modal-skill-info").textContent = `使用スキル: ${skillName} (対象: ${targetIndex + 1}マス目)`;
+    document.getElementById("modal-skill-info").textContent = `${skillName} (対象: ${targetIndex + 1}マス目)`;
     document.getElementById("manual-number-input").value = "";
     document.getElementById("check-critical").checked = false;
     
@@ -352,8 +398,16 @@ function submitAction() {
         currentTemp += activeSkill.tempChange;
     } else {
         let dmg = val;
-        if (document.getElementById("check-critical").checked) dmg = val * 2; 
+        const isCrit = document.getElementById("check-critical").checked;
+        if (isCrit) dmg = val * 2; 
+        
         gridState[activeTarget].value += dmg;
+
+        // 手動で会心をチェックし、基準値をぶち抜いていればロック扱いにする簡易判定
+        if (isCrit && gridState[activeTarget].value >= gridState[activeTarget].min && gridState[activeTarget].value <= gridState[activeTarget].max) {
+             gridState[activeTarget].isLocked = true;
+        }
+
         currentTemp -= (activeSkill.specialTempDrop || 50);
     }
     
