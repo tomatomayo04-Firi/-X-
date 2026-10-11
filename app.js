@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - キャンセル機能・概算超高速AI版
+// app.js - AI事前解析・ななめ打ち修正版
 // ==========================================
-const UPDATE_VERSION = "Ver 10.0 (サクサク軽量化 ＆ みだれうち修正)";
+const UPDATE_VERSION = "Ver 11.0 (AI事前シミュレーション搭載)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -24,6 +24,15 @@ style.innerHTML = `
 #action-guide { text-align: center; font-weight: bold; color: #00bcd4; margin-bottom: 10px; min-height: 20px; }
 .skill-btn.finish-btn { background: #4CAF50; border-color: #388E3C; font-weight: bold; }
 .skill-btn.finish-btn:hover { background: #66BB6A; }
+
+/* AI解析モーダル用スタイル */
+#precompute-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; font-family: monospace; }
+#precompute-overlay.hidden { display: none; }
+.progress-bar { width: 80%; max-width: 400px; height: 20px; background: #222; border: 2px solid #555; border-radius: 10px; overflow: hidden; margin-top: 20px; }
+.progress-fill { width: 0%; height: 100%; background: #00bcd4; box-shadow: 0 0 10px #00bcd4; transition: width 0.1s; }
+#precompute-log { margin-top: 20px; padding: 10px; width: 80%; max-width: 500px; height: 200px; background: #111; border: 1px solid #444; overflow-y: auto; font-size: 0.9em; color: #0f0; border-radius: 5px; }
+#btn-start-smithing { margin-top: 20px; padding: 10px 20px; font-size: 1.2em; background: #e09f3e; color: black; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; display: none; }
+#btn-start-smithing:hover { background: #ffb74d; }
 `;
 document.head.appendChild(style);
 
@@ -45,11 +54,14 @@ let aiSuggestedMove = null;
 let multiHitQueue = [];
 let multiHitResults = [];
 
-// ★ 非同期キャンセルトークン（フリーズ防止用）
 let currentAiCalcId = 0;
 let lastYieldTime = 0;
 
-// 操作した瞬間にAIの計算を強制終了させる関数
+// AIが事前解析で決定したグローバルな戦略設定
+let aiStrategy = {
+    optimalTemp: 1000
+};
+
 function abortAICalculation() {
     currentAiCalcId++;
     const aiBox = document.getElementById("ai-suggestion");
@@ -66,6 +78,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     floatUI.id = "float-quick-input";
     floatUI.className = "hidden";
     document.body.appendChild(floatUI);
+
+    // AI解析オーバーレイの追加
+    const precomputeOverlay = document.createElement("div");
+    precomputeOverlay.id = "precompute-overlay";
+    precomputeOverlay.className = "hidden";
+    precomputeOverlay.innerHTML = `
+        <h2 style="color:#00bcd4; margin-bottom:10px;">🤖 AIレシピ解析・戦略立案中...</h2>
+        <p>最適な目標温度と集中力配分をシミュレーションしています。</p>
+        <div class="progress-bar"><div class="progress-fill" id="precompute-fill"></div></div>
+        <div id="precompute-log"></div>
+        <button id="btn-start-smithing">この戦略で鍛冶を開始する</button>
+    `;
+    document.body.appendChild(precomputeOverlay);
 
     try {
         await loadRecipeData();
@@ -113,25 +138,178 @@ function renderRecipeList() {
     filteredRecipes.forEach(recipe => {
         const li = document.createElement("li");
         li.innerHTML = `<strong>${recipe.name}</strong> <span class="recipe-meta">( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} )</span>`;
-        li.addEventListener("click", () => startSmithing(recipe));
+        li.addEventListener("click", () => initSmithingWithPrecompute(recipe));
         listElement.appendChild(li);
     });
 }
 
-function startSmithing(recipe) {
+// ----------------------------------------------------
+// 【新規】 事前解析（プレコンピュート）の実行
+// ----------------------------------------------------
+async function initSmithingWithPrecompute(recipe) {
     currentRecipe = recipe;
     document.getElementById("current-recipe-name").textContent = recipe.name;
     document.getElementById("display-jigane").textContent = `地金: ${recipe.jiganeType}`;
-    currentTemp = 1000;
     const level = parseInt(document.getElementById("artisan-level").value) || 80;
     maxFocus = (FOCUS_BY_LEVEL[level] || 207) + 45; 
-    currentFocus = maxFocus;
     
+    // オーバーレイ表示
+    const overlay = document.getElementById("precompute-overlay");
+    const logEl = document.getElementById("precompute-log");
+    const fillEl = document.getElementById("precompute-fill");
+    const btnStart = document.getElementById("btn-start-smithing");
+    
+    overlay.classList.remove("hidden");
+    btnStart.style.display = "none";
+    logEl.innerHTML = "";
+    fillEl.style.width = "0%";
+    
+    // 解析用の目標温度候補（地金が光なら1900以上も候補）
+    const tempCandidates = recipe.jiganeType === "光" ? [1000, 1300, 1600, 1900, 2200] : [1000, 1300, 1600, 1900];
+    const simulationsPerTemp = 40; // 各温度で何回シミュレーションするか
+    const totalSims = tempCandidates.length * simulationsPerTemp;
+    let completedSims = 0;
+    
+    let bestStrategyScore = -Infinity;
+    let bestStrategyTemp = 1000;
+    
+    function log(msg) {
+        logEl.innerHTML += `<div>${msg}</div>`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    log(`[AI初期化] レシピ「${recipe.name}」の構造を解析中...`);
+    log(`[AI準備] 基準HP、地金特性、レベル${level}での最適集中力配分を計算します。`);
+    await new Promise(r => setTimeout(r, 800)); // 演出ウェイト
+
+    for (const targetTemp of tempCandidates) {
+        log(`<br><span style="color:#e09f3e;">>> 目標温度 ${targetTemp}℃ 戦略をシミュレーション開始...</span>`);
+        let totalScoreForTemp = 0;
+        
+        for (let i = 0; i < simulationsPerTemp; i++) {
+            // シミュレーション1回実行
+            let score = simulateOneGame(recipe, targetTemp, maxFocus, level);
+            totalScoreForTemp += score;
+            completedSims++;
+            
+            // 描画更新とプログレスバー
+            if (i % 5 === 0) {
+                fillEl.style.width = `${(completedSims / totalSims) * 100}%`;
+                await new Promise(r => setTimeout(r, 10)); 
+            }
+        }
+        
+        let avgScore = totalScoreForTemp / simulationsPerTemp;
+        log(`-- 目標 ${targetTemp}℃ の平均期待値スコア: ${Math.floor(avgScore)}`);
+        
+        if (avgScore > bestStrategyScore) {
+            bestStrategyScore = avgScore;
+            bestStrategyTemp = targetTemp;
+        }
+    }
+    
+    fillEl.style.width = "100%";
+    aiStrategy.optimalTemp = bestStrategyTemp;
+    
+    log(`<br><span style="color:#4CAF50; font-size:1.1em; font-weight:bold;">[解析完了] 決定された最適目標温度: ${aiStrategy.optimalTemp}℃</span>`);
+    log(`※AIはこの温度をゴールとして無駄な火力上げを行わずに進行します。`);
+    
+    btnStart.style.display = "block";
+    btnStart.onclick = () => {
+        overlay.classList.add("hidden");
+        startSmithingCore(recipe, level);
+    };
+}
+
+// プレコンピュート用の簡易AIシミュレータ
+function simulateOneGame(recipe, optimalTemp, focus, level) {
+    let state = recipe.targets.map(t => ({ value: 0, min: t.min, max: t.max, isLocked: false }));
+    let temp = 1000;
+    let currentFocus = focus;
+    
+    let critRateBase = 0.056; // 簡易的に一律設定
+    
+    for (let turn = 0; turn < 40; turn++) { // 最大40ターン
+        let moves = getLegalMoves(state, temp, currentFocus, optimalTemp, recipe, level);
+        if (moves.length === 0) break;
+        
+        // 1手先読みで一番良さそうな手を選ぶ（簡易グリーディ）
+        let bestMove = null;
+        let bestScore = -Infinity;
+        for (const m of moves) {
+            if (m.skill.type === "finish") {
+                let sc = evaluateStateScore(state, temp, currentFocus - m.skill.focus, optimalTemp);
+                if (sc > bestScore) { bestScore = sc; bestMove = m; }
+                continue;
+            }
+            if (m.skill.type === "temp") {
+                let nTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + m.skill.tempChange));
+                let sc = evaluateStateScore(state, nTemp, currentFocus - m.skill.focus, optimalTemp) - 500;
+                if (sc > bestScore) { bestScore = sc; bestMove = m; }
+                continue;
+            }
+            // 攻撃スキルの簡易評価
+            let dist = getDamageDistribution(temp, m.skill.mult);
+            if (dist.length > 0) {
+                let avg = (dist[0] + dist[dist.length-1])/2;
+                let nState = cloneState(state);
+                if (m.skill.type === "random") {
+                    let unl = nState.filter(s=>!s.isLocked);
+                    if(unl.length > 0) {
+                        unl.forEach(s => s.value += avg * (4/nState.length));
+                    }
+                } else {
+                    m.targets.forEach(t => { if(!nState[t].isLocked) nState[t].value += avg; });
+                }
+                let sc = evaluateStateScore(nState, temp-50, currentFocus - m.skill.focus, optimalTemp);
+                if (sc > bestScore) { bestScore = sc; bestMove = m; }
+            }
+        }
+        
+        if (!bestMove || bestMove.skill.type === "finish") break;
+        
+        // 選ばれたスキルを実行して盤面を更新
+        currentFocus -= bestMove.skill.focus;
+        if (bestMove.skill.type === "temp") {
+            temp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + bestMove.skill.tempChange));
+        } else {
+            let dist = getDamageDistribution(temp, bestMove.skill.mult);
+            if (dist.length > 0) {
+                let actualDmg = dist[Math.floor(Math.random() * dist.length)];
+                let isCrit = Math.random() < critRateBase;
+                if (bestMove.skill.isCritUp) isCrit = Math.random() < (critRateBase + 0.25);
+                let dmg = actualDmg * (isCrit ? 2 : 1);
+                
+                if (bestMove.skill.type === "random") {
+                    for(let r=0; r<4; r++) {
+                        let targetIdx = Math.floor(Math.random() * state.length);
+                        if (!state[targetIdx].isLocked) state[targetIdx].value += (dmg / 4); // 簡易均等化
+                    }
+                } else {
+                    bestMove.targets.forEach(t => {
+                        if (!state[t].isLocked) state[t].value += dmg;
+                    });
+                }
+            }
+            temp -= (bestMove.skill.specialTempDrop || 50);
+        }
+        if (temp < MIN_TEMP) temp = MIN_TEMP;
+    }
+    
+    return evaluateStateScore(state, temp, currentFocus, optimalTemp);
+}
+
+// ----------------------------------------------------
+// 【メイン】 鍛冶スタート処理
+// ----------------------------------------------------
+function startSmithingCore(recipe, level) {
+    currentTemp = 1000;
+    currentFocus = maxFocus;
     gridState = [];
     recipe.targets.forEach(target => gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false }));
     history = [];
     
-    abortAICalculation(); // リセット時に中断
+    abortAICalculation(); 
     
     if(!document.getElementById("action-guide")) {
         const guide = document.createElement("div");
@@ -148,6 +326,58 @@ function startSmithing(recipe) {
     document.getElementById("scene-smithing").classList.add("active");
     calculateAI();
 }
+
+// ----------------------------------------------------
+// 【修正】 ななめ打ちの厳格化（/方向のみ）
+// ----------------------------------------------------
+function getMultiHitTargets(skillName, startIndex, stateArray) {
+    const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
+    const cols = layout.cols;
+    const rows = layout.rows || Math.ceil(stateArray.length / cols);
+    let targets = [startIndex];
+    
+    if (skillName === "上下打ち") {
+        let down = startIndex + cols;
+        if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
+    } else if (skillName === "左右打ち") {
+        if ((startIndex % cols) !== (cols - 1)) {
+            let right = startIndex + 1;
+            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
+        }
+    } else if (skillName === "4連打ち" || skillName === "超4連打ち") {
+        let right = startIndex + 1;
+        let down = startIndex + cols;
+        let downright = startIndex + cols + 1;
+        if ((startIndex % cols) !== (cols - 1)) {
+            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
+            if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
+            if (downright < stateArray.length && layout.cells[downright] !== null && !stateArray[downright].isLocked) targets.push(downright);
+        }
+    } else if (skillName === "ななめ打ち") {
+        targets = [];
+        let r = Math.floor(startIndex / cols);
+        let c = startIndex % cols;
+        
+        // / 方向のペア (右上 と 左下) のみ許可
+        // 自分が右上(c > 0, r < rows-1)なら、左下を探す
+        if (c > 0 && r < rows - 1) {
+            targets = [startIndex, startIndex + cols - 1];
+        } 
+        // 自分が左下(c < cols-1, r > 0)なら、右上を探す
+        else if (c < cols - 1 && r > 0) {
+            targets = [startIndex, startIndex - cols + 1];
+        }
+        
+        // 有効なマス（nullでなく、ロックされていない）だけを返す
+        targets = targets.filter(t => stateArray[t] !== undefined && layout.cells[t] !== null && !stateArray[t].isLocked);
+    }
+    return [...new Set(targets)]; 
+}
+
+// ==========================================
+// 通常のUI・計算処理 (Ver 10.0と同じ)
+// ==========================================
+// ... (既存の setupSkills, renderGrid, handleCellClick などのUI処理は全く同じまま)
 
 function updateStatusUI() {
     document.getElementById("current-temp").textContent = currentTemp;
@@ -204,33 +434,6 @@ function renderGrid() {
     });
 }
 
-function getMultiHitTargets(skillName, startIndex, stateArray) {
-    const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
-    const cols = layout.cols;
-    let targets = [startIndex];
-    
-    if (skillName === "上下打ち") {
-        let down = startIndex + cols;
-        if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
-    } else if (skillName === "左右打ち") {
-        if ((startIndex % cols) !== (cols - 1)) {
-            let right = startIndex + 1;
-            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
-        }
-    } else if (skillName === "4連打ち" || skillName === "超4連打ち" || skillName === "ななめ打ち") {
-        let right = startIndex + 1;
-        let down = startIndex + cols;
-        let downright = startIndex + cols + 1;
-        if ((startIndex % cols) !== (cols - 1)) {
-            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
-            if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
-            if (downright < stateArray.length && layout.cells[downright] !== null && !stateArray[downright].isLocked) targets.push(downright);
-        }
-        if (skillName === "ななめ打ち") targets = [targets[0], targets[targets.length - 1]].filter(t => t !== undefined);
-    }
-    return [...new Set(targets)]; 
-}
-
 function setupSkills(level) {
     const skillList = document.getElementById("skill-list");
     skillList.innerHTML = "";
@@ -258,7 +461,7 @@ function resetSelectionState() {
 }
 
 function handleSkillSelect(skill) {
-    abortAICalculation(); // ユーザー操作が入った瞬間にAI停止！
+    abortAICalculation(); 
 
     if (currentFocus < skill.focus) { alert("集中力が足りません"); return; }
     selectedSkill = skill;
@@ -278,7 +481,7 @@ function handleSkillSelect(skill) {
 }
 
 function handleCellClick(targetIndex, isAuto = false, event = null) {
-    abortAICalculation(); // ユーザー操作停止
+    abortAICalculation(); 
 
     if (currentActionState !== "skillSelected" || !selectedSkill) return;
     let targets = getMultiHitTargets(selectedSkill.name, targetIndex, gridState);
@@ -453,7 +656,7 @@ document.getElementById("btn-cancel-input").addEventListener("click", () => {
 
 document.querySelectorAll(".num-key").forEach(key => {
     key.addEventListener("click", (e) => {
-        abortAICalculation(); // 操作時キャンセル
+        abortAICalculation(); 
         
         const input = window.currentActiveInput;
         if (!input) return;
@@ -470,7 +673,7 @@ document.querySelectorAll(".num-key").forEach(key => {
 });
 
 document.getElementById("btn-undo").addEventListener("click", () => {
-    abortAICalculation(); // 操作時キャンセル
+    abortAICalculation(); 
     
     if (history.length === 0) return;
     const lastState = JSON.parse(history.pop());
@@ -492,22 +695,11 @@ async function calculateAI() {
     aiBox.textContent = "AI思考中... (高速概算で数手先を予測中 ⚡)";
     aiSuggestedMove = null;
 
-    await new Promise(resolve => setTimeout(resolve, 10)); // 描画更新の猶予
+    await new Promise(resolve => setTimeout(resolve, 10)); 
     
-    // 思考深さ (4手先)
     const SEARCH_DEPTH = 4;
-    
-    const jigane = currentRecipe.jiganeType;
-    let maxShortfall = 0;
-    gridState.forEach(s => {
-        if (!s.isLocked && s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
-    });
-    
-    let optimalTemp = 1000;
-    if (jigane === "光") optimalTemp = 2000;
-    else if (maxShortfall > 220) optimalTemp = 1600;
-    else if (maxShortfall > 90) optimalTemp = 1300;
-    else optimalTemp = 1000;
+    // プレコンピュートで決定した最適温度を使用！
+    const optimalTemp = aiStrategy.optimalTemp;
 
     let legalMoves = getLegalMoves(gridState, currentTemp, currentFocus, optimalTemp, currentRecipe);
     
@@ -516,9 +708,8 @@ async function calculateAI() {
 
     try {
         for (let move of legalMoves) {
-            if (currentAiCalcId !== myCalcId) return; // UI操作でキャンセル検知
+            if (currentAiCalcId !== myCalcId) return; 
             
-            // 第一階層は正確な分岐ノードとして渡す
             let score = await evaluateMoveApproxAsync(move, gridState, currentTemp, currentFocus, optimalTemp, SEARCH_DEPTH, myCalcId, true);
             
             if (score > bestScore) {
@@ -527,11 +718,11 @@ async function calculateAI() {
             }
         }
     } catch (e) {
-        if (e.message === "AI_CANCELLED") return; // 正常なキャンセル
+        if (e.message === "AI_CANCELLED") return; 
         throw e;
     }
 
-    if (currentAiCalcId !== myCalcId) return; // 結果表示前にキャンセルチェック
+    if (currentAiCalcId !== myCalcId) return; 
 
     if (bestMove && bestMove.skill) {
         aiSuggestedMove = bestMove;
@@ -552,7 +743,7 @@ async function calculateAI() {
             aiBox.innerHTML = `
                 <div style="font-size:1.1em; margin-bottom:5px;">💡 <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に使用</div>
                 <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
-                【AI方針】 目標温度: ${optimalTemp}℃ <br>
+                【AI方針】 最適目標温度: ${optimalTemp}℃ に向かって進行中 <br>
                 </div>
             `;
             renderGrid(); 
@@ -562,7 +753,6 @@ async function calculateAI() {
     }
 }
 
-// UIのフリーズを防ぐためのYield関数（16msごとにメインスレッド解放）
 async function yieldIfNeeded(myCalcId) {
     if (currentAiCalcId !== myCalcId) throw new Error("AI_CANCELLED");
     if (Date.now() - lastYieldTime > 16) {
@@ -576,9 +766,9 @@ function cloneState(state) {
     return state.map(s => ({ value: s.value, min: s.min, max: s.max, isLocked: s.isLocked }));
 }
 
-function getLegalMoves(state, temp, focus, optimalTemp, recipe) {
+function getLegalMoves(state, temp, focus, optimalTemp, recipe, overrideLevel = null) {
     let moves = [];
-    let level = parseInt(document.getElementById("artisan-level").value) || 80;
+    let level = overrideLevel || parseInt(document.getElementById("artisan-level").value) || 80;
     
     let hasUnlocked = false;
     let allInZone = true;
@@ -650,7 +840,6 @@ function evaluateStateScore(state, temp, focus, optimalTemp) {
     return score;
 }
 
-// 概算で枝刈りしながら深く読むメイン関数
 async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, depth, myCalcId, isExactNode) {
     await yieldIfNeeded(myCalcId);
 
@@ -685,7 +874,6 @@ async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, de
     let tempDrop = move.skill.specialTempDrop || 50;
     let nextTemp = Math.max(MIN_TEMP, temp - tempDrop);
     
-    // みだれうち（ロック済マスに当たってもダメージゼロになる正しい仕様）
     if (move.skill.type === 'random') {
         let dist = getDamageDistribution(temp, move.skill.mult);
         if (dist.length === 0) return -999999;
@@ -695,14 +883,10 @@ async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, de
         let expectedDmg = avgDmg * (1 + critRate);
         
         let nextStateApprox = cloneState(state);
-        // 全マスの数を分母にする（ロックされたマスにも当たるため）
         let hitPerCell = 4 / state.length;
         
         nextStateApprox.forEach((s, i) => {
-            // ロックされていない場合のみ、ダメージが加算される（ロックマスに当たった分は無効になる）
-            if (!s.isLocked) {
-                s.value += (expectedDmg * hitPerCell);
-            }
+            if (!s.isLocked) s.value += (expectedDmg * hitPerCell);
         });
         
         if (depth > 1) {
@@ -726,7 +910,6 @@ async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, de
     let critRate = (document.getElementById("has-kotsu").checked ? 0.02 : 0.01) + 0.046;
     if (move.skill.isCritUp) critRate += (0.046 * 6);
     
-    // 第一階層（正確な分岐）の場合は 通常ルートと会心ルートを分けて真面目に計算
     if (isExactNode) {
         let stateNorm = cloneState(state);
         move.targets.forEach(t => { if (!stateNorm[t].isLocked) stateNorm[t].value += avgDmg; });
@@ -772,16 +955,12 @@ async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, de
             scoreCrit = evaluateStateScore(stateCrit, nextTemp, nextFocus, optimalTemp);
         }
         return (scoreNorm * (1 - critRate)) + (scoreCrit * critRate);
-    } 
-    // 第二階層以降（高速・概算期待値１本道ルート）
-    else {
+    } else {
         let expectedDmg = avgDmg * (1 + critRate);
         let nextStateApprox = cloneState(state);
         
         move.targets.forEach(t => {
-            if (!nextStateApprox[t].isLocked) {
-                nextStateApprox[t].value += expectedDmg;
-            }
+            if (!nextStateApprox[t].isLocked) nextStateApprox[t].value += expectedDmg;
         });
         
         if (depth > 1) {
