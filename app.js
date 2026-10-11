@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - 高速ハイブリッド・スマート思考版
+// app.js - ディープ先読み・概算分岐モデル
 // ==========================================
-const UPDATE_VERSION = "Ver 8.0 (高速ハイブリッド思考)";
+const UPDATE_VERSION = "Ver 9.0 (ディープ先読み・概算期待値AI)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -189,27 +189,27 @@ function renderGrid() {
     });
 }
 
-function getMultiHitTargets(skillName, startIndex) {
+function getMultiHitTargets(skillName, startIndex, stateArray) {
     const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
     const cols = layout.cols;
     let targets = [startIndex];
     
     if (skillName === "上下打ち") {
         let down = startIndex + cols;
-        if (down < gridState.length && layout.cells[down] !== null && !gridState[down].isLocked) targets.push(down);
+        if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
     } else if (skillName === "左右打ち") {
         if ((startIndex % cols) !== (cols - 1)) {
             let right = startIndex + 1;
-            if (right < gridState.length && layout.cells[right] !== null && !gridState[right].isLocked) targets.push(right);
+            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
         }
     } else if (skillName === "4連打ち" || skillName === "超4連打ち" || skillName === "ななめ打ち") {
         let right = startIndex + 1;
         let down = startIndex + cols;
         let downright = startIndex + cols + 1;
         if ((startIndex % cols) !== (cols - 1)) {
-            if (right < gridState.length && layout.cells[right] !== null && !gridState[right].isLocked) targets.push(right);
-            if (down < gridState.length && layout.cells[down] !== null && !gridState[down].isLocked) targets.push(down);
-            if (downright < gridState.length && layout.cells[downright] !== null && !gridState[downright].isLocked) targets.push(downright);
+            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
+            if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
+            if (downright < stateArray.length && layout.cells[downright] !== null && !stateArray[downright].isLocked) targets.push(downright);
         }
         if (skillName === "ななめ打ち") targets = [targets[0], targets[targets.length - 1]].filter(t => t !== undefined);
     }
@@ -262,7 +262,7 @@ function handleSkillSelect(skill) {
 
 function handleCellClick(targetIndex, isAuto = false, event = null) {
     if (currentActionState !== "skillSelected" || !selectedSkill) return;
-    let targets = getMultiHitTargets(selectedSkill.name, targetIndex);
+    let targets = getMultiHitTargets(selectedSkill.name, targetIndex, gridState);
     if(targets.length === 0) return;
     
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
@@ -286,7 +286,6 @@ function showNextMiniPopup() {
     floatUI.innerHTML = "";
     
     const dist = getDamageDistribution(currentTemp, selectedSkill.mult);
-
     let title = document.createElement("div");
     title.className = "float-title";
     title.textContent = `▶ マス[${cellLetters[tIndex]}] の結果`;
@@ -459,16 +458,49 @@ document.getElementById("btn-undo").addEventListener("click", () => {
 });
 
 // ==========================================
-// 高速ハイブリッド思考AI (ロールアウト評価導入)
+// ディープ先読み 期待値ミニマックスAI
 // ==========================================
 async function calculateAI() {
     const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "AI思考中... (高速計算中 ⚡)";
+    aiBox.textContent = "AI思考中... (数手先までの全ルートを期待値で計算中 ⌛)";
     aiSuggestedMove = null;
 
-    await new Promise(resolve => setTimeout(resolve, 20));
+    // フリーズを防ぐため一瞬処理を逃がす
+    await new Promise(resolve => setTimeout(resolve, 50));
 
-    const bestMove = searchBestMoveFast(gridState, currentTemp, currentFocus);
+    // ★ 思考の深さ（4手先まで完全に読む）
+    const SEARCH_DEPTH = 4;
+    
+    // 目標温度の設定
+    const jigane = currentRecipe.jiganeType;
+    let maxShortfall = 0;
+    gridState.forEach(s => {
+        if (!s.isLocked && s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
+    });
+    
+    let optimalTemp = 1000;
+    if (jigane === "光") optimalTemp = 2000;
+    else if (maxShortfall > 220) optimalTemp = 1600;
+    else if (maxShortfall > 90) optimalTemp = 1300;
+    else optimalTemp = 1000;
+
+    // 第一階層の合法手を取得
+    let legalMoves = getLegalMoves(gridState, currentTemp, currentFocus, optimalTemp, currentRecipe);
+    
+    let bestMove = null;
+    let bestScore = -Infinity;
+
+    // 非同期で合法手を1つずつ深く計算（1手ごとに画面のフリーズを解除）
+    for (let move of legalMoves) {
+        await new Promise(resolve => setTimeout(resolve, 0)); // 非同期Yield
+        
+        let score = evaluateMoveRec(move, gridState, currentTemp, currentFocus, optimalTemp, SEARCH_DEPTH, currentRecipe);
+        
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = move;
+        }
+    }
 
     if (bestMove && bestMove.skill) {
         aiSuggestedMove = bestMove;
@@ -477,8 +509,7 @@ async function calculateAI() {
             aiBox.innerHTML = `
                 <div style="font-size:1.1em; margin-bottom:5px; color:#4CAF50;">💡 <strong>しあげる (完成にする)</strong></div>
                 <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
-                【AI方針】 全マスが安全なゾーンに収まっています。これ以上叩くとはみ出します。<br>
-                (評価スコア: ${Math.floor(bestMove.score)})
+                【AI方針】 今が最高の状態です。数手先まで読んでもこれ以上叩くとはみ出すリスクが大きいです。<br>
                 </div>
             `;
         } else {
@@ -490,8 +521,7 @@ async function calculateAI() {
             aiBox.innerHTML = `
                 <div style="font-size:1.1em; margin-bottom:5px;">💡 <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に使用</div>
                 <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
-                【AI方針】 目標温度: ${bestMove.optimalTemp}℃ <br>
-                (評価スコア: ${Math.floor(bestMove.score)})
+                【AI方針】 目標温度: ${optimalTemp}℃ <br>
                 </div>
             `;
             renderGrid(); 
@@ -501,152 +531,222 @@ async function calculateAI() {
     }
 }
 
-function searchBestMoveFast(state, temp, focus) {
-    let bestSkill = null; 
-    let bestTargets = []; 
-    let bestScore = -Infinity;
-    const level = parseInt(document.getElementById("artisan-level").value) || 80;
-    const jigane = currentRecipe.jiganeType;
-    let critRateBase = document.getElementById("has-kotsu").checked ? 0.02 : 0.01;
-    critRateBase += 0.046; 
+// 盤面を軽量にコピーする関数（高速化の要）
+function cloneState(state) {
+    return state.map(s => ({
+        value: s.value,
+        min: s.min,
+        max: s.max,
+        isLocked: s.isLocked
+    }));
+}
 
-    let maxShortfall = 0;
-    state.forEach(s => {
-        if (!s.isLocked && s.value < s.min) {
-            maxShortfall = Math.max(maxShortfall, s.min - s.value);
-        }
-    });
+// 合法手（今打てる意味のある手）を絞り込む関数
+function getLegalMoves(state, temp, focus, optimalTemp, recipe) {
+    let moves = [];
+    let level = parseInt(document.getElementById("artisan-level").value) || 80;
     
-    // メタスラ等は1300度、高レベルは1600度などを自動割り当て
-    let optimalTemp = 1000;
-    if (jigane === "光") optimalTemp = 2000;
-    else if (maxShortfall > 150) optimalTemp = 1600;
-    else if (maxShortfall > 80) optimalTemp = 1300;
-    else optimalTemp = 1000;
-
-    let isAlreadyCoolingDown = false;
-    if (history.length > 0) {
-        let maxTempInHistory = Math.max(...history.map(h => JSON.parse(h).temp), currentTemp);
-        if (maxTempInHistory - temp >= 80) isAlreadyCoolingDown = true;
-    }
-
-    // 「しあげる」の判定：すべての未ロックマスが成功ゾーン内なら非常に高いスコアを与える
-    let allInZone = true;
     let hasUnlocked = false;
+    let allInZone = true;
     state.forEach(s => {
         if (!s.isLocked) {
             hasUnlocked = true;
             if (s.value < s.min || s.value > s.max) allInZone = false;
         }
     });
+    
+    // しあげるの判定
+    if (hasUnlocked && allInZone) {
+        moves.push({ skill: SKILLS.find(s => s.type === 'finish'), targets: [] });
+    }
+
+    let isAlreadyCoolingDown = false;
+    if (history.length > 0) {
+        let maxTempInHistory = Math.max(...history.map(h => JSON.parse(h).temp), currentTemp);
+        if (maxTempInHistory - temp >= 100) isAlreadyCoolingDown = true;
+    }
 
     SKILLS.forEach(skill => {
+        if (skill.type === 'finish') return;
         if (level < skill.reqLevel || focus < skill.focus) return;
-
+        
+        // 序盤の無駄な火力上げ、終盤の無駄な冷やし込みを禁止
         if (skill.name === "火力上げ" && (temp >= optimalTemp || isAlreadyCoolingDown)) return;
-        if (skill.name === "冷やし込み" && (temp <= 1000 || maxShortfall > 50)) return;
-
-        if (skill.type === "finish") {
-            if (hasUnlocked && allInZone) {
-                let finishScore = 999999;
-                if (finishScore > bestScore) {
-                    bestScore = finishScore;
-                    bestSkill = skill;
-                    bestTargets = [];
-                }
-            }
-            return;
-        }
-
+        if (skill.name === "冷やし込み" && temp <= 1000) return; 
+        
         let startIndices = [0];
         if (skill.type !== "temp" && skill.type !== "random") {
             startIndices = [];
             state.forEach((s, i) => { if (!s.isLocked && s.value < s.max) startIndices.push(i); });
         }
-
-        startIndices.forEach(startIndex => {
-            let targets = skill.type === "temp" ? [] : getMultiHitTargets(skill.name, startIndex);
-            let expectedScore = 0;
-            const nextFocus = focus - skill.focus;
+        
+        startIndices.forEach(idx => {
+            let targets = skill.type === "temp" ? [] : getMultiHitTargets(skill.name, idx, state);
+            if (skill.type !== "temp" && targets.length === 0) return;
             
-            if (skill.type === "temp") {
-                let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + skill.tempChange));
-                // 2手先以降はざっくりとした評価関数（ロールアウト評価）で一発計算
-                expectedScore = evaluateBoardStateFast(state, nextTemp, nextFocus, optimalTemp);
-                expectedScore -= 500; // 無駄な温度変更への軽いペナルティ
-            } else if (skill.type === "random") {
-                const dist = getDamageDistribution(temp, skill.mult);
-                if (dist.length > 0) {
-                    let emptyCells = [];
-                    state.forEach((s, i) => { if (!s.isLocked && s.value < s.max) emptyCells.push(i); });
-                    if (emptyCells.length > 0) {
-                        let avgDmg = ((dist[0] + dist[dist.length-1]) / 2) * (4 / emptyCells.length);
-                        let nextState = JSON.parse(JSON.stringify(state));
-                        emptyCells.forEach(t => nextState[t].value += avgDmg);
-                        expectedScore = evaluateBoardStateFast(nextState, temp - 50, nextFocus, optimalTemp);
-                    }
-                }
-            } else {
-                const dist = getDamageDistribution(temp, skill.mult);
-                if (dist.length === 0) return;
-
-                let currentCritRate = critRateBase;
-                if (skill.isCritUp) currentCritRate += (0.046 * 6); 
-
-                // 通常時と会心時の期待値を1発で合成計算
-                let avgDamage = (dist[0] + dist[dist.length - 1]) / 2;
-                let tempDrop = skill.specialTempDrop || 50;
-
-                let nextStateNorm = JSON.parse(JSON.stringify(state));
-                targets.forEach(t => nextStateNorm[t].value += avgDamage);
-                let scoreNorm = evaluateBoardStateFast(nextStateNorm, temp - tempDrop, nextFocus, optimalTemp);
-
-                let nextStateCrit = JSON.parse(JSON.stringify(state));
-                targets.forEach(t => {
-                    let newValue = nextStateCrit[t].value + (avgDamage * 2);
-                    let center = (nextStateCrit[t].min + nextStateCrit[t].max) / 2;
-                    if (newValue >= center) nextStateCrit[t].isLocked = true;
-                    else nextStateCrit[t].value = newValue;
-                });
-                let scoreCrit = evaluateBoardStateFast(nextStateCrit, temp - tempDrop, nextFocus, optimalTemp);
-
-                expectedScore = (scoreNorm * (1 - currentCritRate)) + (scoreCrit * currentCritRate);
-            }
-
-            if (expectedScore > bestScore) {
-                bestScore = expectedScore; 
-                bestSkill = skill; 
-                bestTargets = targets;
-            }
+            moves.push({ skill, targets });
         });
     });
-
-    return { skill: bestSkill, targets: bestTargets, score: bestScore, optimalTemp: optimalTemp };
+    
+    return moves;
 }
 
-function evaluateBoardStateFast(state, currentTemp, currentFocus, optimalTemp) {
+// 盤面の最終評価スコアを出す関数
+function evaluateStateScore(state, temp, focus, optimalTemp) {
     let score = 0;
     let isAllDone = true;
     
-    state.forEach(s => {
+    for (let i = 0; i < state.length; i++) {
+        let s = state[i];
         if (s.isLocked) {
-            score += 50000; 
+            score += 100000; 
         } else if (s.value > s.max) {
-            score -= 20000; // はみ出しペナルティ
+            score -= 30000; // はみ出し
             isAllDone = false;
         } else if (s.value >= s.min && s.value <= s.max) {
-            score += 20000; 
+            score += 30000; 
             const center = (s.min + s.max) / 2;
-            score -= Math.abs(s.value - center) * 5;
+            score -= Math.abs(s.value - center) * 10;
         } else {
             isAllDone = false;
             let shortfall = s.min - s.value;
-            score -= shortfall * 30;
+            score -= shortfall * 50;
+            // はみ出しリスクペナルティ
+            if (s.value + 30 > s.max) score -= 1500; 
+        }
+    }
+
+    if (isAllDone) score += 500000; 
+    score -= Math.abs(temp - optimalTemp) * 15;
+    score += focus * 150; 
+    return score;
+}
+
+// ディープ再帰探索関数（同期的に一気に木を掘る）
+function evaluateMoveRec(move, state, temp, focus, optimalTemp, depth, recipe) {
+    let nextFocus = focus - move.skill.focus;
+    if (nextFocus < 0) return -999999; // 集中力切れは論外
+    
+    if (move.skill.type === 'finish') {
+        return evaluateStateScore(state, temp, nextFocus, optimalTemp);
+    }
+    
+    // 温度操作スキル
+    if (move.skill.type === 'temp') {
+        let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + move.skill.tempChange));
+        
+        let finalScore = 0;
+        if (depth > 1) {
+            let nextMoves = getLegalMoves(state, nextTemp, nextFocus, optimalTemp, recipe);
+            if (nextMoves.length > 0) {
+                let bestSub = -Infinity;
+                for (let nMove of nextMoves) {
+                    let subScore = evaluateMoveRec(nMove, state, nextTemp, nextFocus, optimalTemp, depth - 1, recipe);
+                    if (subScore > bestSub) bestSub = subScore;
+                }
+                finalScore = bestSub;
+            } else {
+                finalScore = evaluateStateScore(state, nextTemp, nextFocus, optimalTemp);
+            }
+        } else {
+            finalScore = evaluateStateScore(state, nextTemp, nextFocus, optimalTemp);
+        }
+        return finalScore - 500; // 無駄な温度変更の微細ペナルティ
+    }
+    
+    let tempDrop = move.skill.specialTempDrop || 50;
+    let nextTemp = Math.max(MIN_TEMP, temp - tempDrop);
+    
+    // みだれ打ち（ランダム対象）の概算期待値
+    if (move.skill.type === 'random') {
+        let dist = getDamageDistribution(temp, move.skill.mult);
+        if (dist.length === 0) return -999999;
+        
+        let avgDmg = (dist[0] + dist[dist.length - 1]) / 2;
+        let emptyCells = [];
+        state.forEach((s, i) => { if (!s.isLocked && s.value < s.max) emptyCells.push(i); });
+        
+        let nextState = cloneState(state);
+        if (emptyCells.length > 0) {
+            let hitPerCell = 4 / emptyCells.length;
+            emptyCells.forEach(i => nextState[i].value += avgDmg * hitPerCell);
+        }
+        
+        if (depth > 1) {
+            let nextMoves = getLegalMoves(nextState, nextTemp, nextFocus, optimalTemp, recipe);
+            if (nextMoves.length > 0) {
+                let bestSub = -Infinity;
+                for (let nMove of nextMoves) {
+                    let subScore = evaluateMoveRec(nMove, nextState, nextTemp, nextFocus, optimalTemp, depth - 1, recipe);
+                    if (subScore > bestSub) bestSub = subScore;
+                }
+                return bestSub;
+            }
+        }
+        return evaluateStateScore(nextState, nextTemp, nextFocus, optimalTemp);
+    }
+    
+    // 通常の叩きスキルの概算期待値（通常ルートと会心ルートの2分岐）
+    let dist = getDamageDistribution(temp, move.skill.mult);
+    if (dist.length === 0) return -999999;
+    
+    let avgDmg = (dist[0] + dist[dist.length - 1]) / 2;
+    let critRate = (document.getElementById("has-kotsu").checked ? 0.02 : 0.01) + 0.046;
+    if (move.skill.isCritUp) critRate += 0.046 * 6; // ねらい打ち系の概算確率加算
+    
+    // 分岐1：通常ヒットした世界の盤面
+    let stateNorm = cloneState(state);
+    move.targets.forEach(t => { if (!stateNorm[t].isLocked) stateNorm[t].value += avgDmg; });
+    
+    // 分岐2：会心ヒットした世界の盤面
+    let stateCrit = cloneState(state);
+    move.targets.forEach(t => {
+        if (!stateCrit[t].isLocked) {
+            let val = stateCrit[t].value + (avgDmg * 2);
+            let center = (stateCrit[t].min + stateCrit[t].max) / 2;
+            // 会心で成功ゾーンに入るならロックされたものとしてシミュレート
+            if (val >= stateCrit[t].min && val <= stateCrit[t].max + (avgDmg*2)) { 
+                stateCrit[t].isLocked = true;
+                stateCrit[t].value = Math.min(val, center);
+            } else {
+                stateCrit[t].value = val;
+            }
         }
     });
-
-    if (isAllDone) score += 200000; 
-    score -= Math.abs(currentTemp - optimalTemp) * 10;
-    score += currentFocus * 50; // 集中力も加味
-    return score;
+    
+    let scoreNorm = 0, scoreCrit = 0;
+    
+    if (depth > 1) {
+        // 通常ルートの先読み
+        let movesNorm = getLegalMoves(stateNorm, nextTemp, nextFocus, optimalTemp, recipe);
+        if (movesNorm.length > 0) {
+            let bestSub = -Infinity;
+            for (let nMove of movesNorm) {
+                let subScore = evaluateMoveRec(nMove, stateNorm, nextTemp, nextFocus, optimalTemp, depth - 1, recipe);
+                if (subScore > bestSub) bestSub = subScore;
+            }
+            scoreNorm = bestSub;
+        } else {
+            scoreNorm = evaluateStateScore(stateNorm, nextTemp, nextFocus, optimalTemp);
+        }
+        
+        // 会心ルートの先読み
+        let movesCrit = getLegalMoves(stateCrit, nextTemp, nextFocus, optimalTemp, recipe);
+        if (movesCrit.length > 0) {
+            let bestSub = -Infinity;
+            for (let nMove of movesCrit) {
+                let subScore = evaluateMoveRec(nMove, stateCrit, nextTemp, nextFocus, optimalTemp, depth - 1, recipe);
+                if (subScore > bestSub) bestSub = subScore;
+            }
+            scoreCrit = bestSub;
+        } else {
+            scoreCrit = evaluateStateScore(stateCrit, nextTemp, nextFocus, optimalTemp);
+        }
+    } else {
+        scoreNorm = evaluateStateScore(stateNorm, nextTemp, nextFocus, optimalTemp);
+        scoreCrit = evaluateStateScore(stateCrit, nextTemp, nextFocus, optimalTemp);
+    }
+    
+    // 最終的な手の期待値 ＝ (通常時のスコア × 通常確率) ＋ (会心時のスコア × 会心確率)
+    return (scoreNorm * (1 - critRate)) + (scoreCrit * critRate);
 }
