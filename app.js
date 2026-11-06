@@ -1,5 +1,5 @@
 // ==========================================
-// app.js - Ver 12.0 (完全仕様・DQXガチシミュレータ版)
+// app.js - Ver 12.0 (完全仕様対応・DQXガチシミュレータ)
 // ==========================================
 const UPDATE_VERSION = "Ver 12.0 (完全仕様対応・DQXガチシミュレータ)";
 
@@ -53,7 +53,7 @@ const EQUIP_LAYOUTS = {
     "からだ上": { w: 2, h: 2, map: [1,1, 1,1] },
     "からだ下": { w: 2, h: 4, map: [1,1, 1,1, 1,1, 1,1] },
     "ウデ":     { w: 1, h: 3, map: [1, 1, 1] },
-    "足":       { w: 2, h: 3, map: [0,1, 0,1, 1,1] } // 上段右, 中段右, 下段左, 下段右
+    "足":       { w: 2, h: 3, map: [0,1, 0,1, 1,1] }
 };
 
 const THRESHOLDS = {
@@ -82,38 +82,6 @@ const SKILLS = [
     { name: "しあげる",     req_lv: 1,  cost: 0,  mult: 0.0, type: "finish" }
 ];
 
-// -------------------------
-// 状態変数
-// -------------------------
-let currentRecipe = null;
-let currentTemp = 1000;
-let currentFocus = 0;
-let maxFocus = 0;
-let playerLevel = 80;
-let gridState = []; // 実在するマスのみの配列
-let history = []; 
-let turnCount = 0;
-
-// バフ状態
-let buffDouble = false;
-let buffHalf = false;
-let buffFocusHalf = false;
-let buffFocusCrit = false;
-let shiningCellIdx = -1;
-
-let currentActionState = "idle";
-let selectedSkill = null;
-let aiSuggestedMove = null;
-let multiHitQueue = [];
-let multiHitResults = [];
-
-// AI用
-let currentAiCalcId = 0;
-let lastYieldTime = 0;
-
-// ==========================================
-// レシピデータの定義
-// ==========================================
 const RECIPES = [
   {
     "name": "メタスラの盾",
@@ -969,10 +937,36 @@ const RECIPES = [
   }
 ];
 
-// loadRecipeData 関数の定義
 function loadRecipeData() {
     return Promise.resolve();
 }
+
+// -------------------------
+// 状態変数
+// -------------------------
+let currentRecipe = null;
+let currentTemp = 1000;
+let currentFocus = 0;
+let maxFocus = 0;
+let playerLevel = 80;
+let gridState = []; 
+let history = []; 
+let turnCount = 0;
+
+let buffDouble = false;
+let buffHalf = false;
+let buffFocusHalf = false;
+let buffFocusCrit = false;
+let shiningCellIdx = -1;
+
+let currentActionState = "idle";
+let selectedSkill = null;
+let aiSuggestedMove = null;
+let multiHitQueue = [];
+let multiHitResults = [];
+
+let currentAiCalcId = 0;
+let lastYieldTime = 0;
 
 // -------------------------
 // 初期化処理
@@ -986,14 +980,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     floatUI.className = "hidden";
     document.body.appendChild(floatUI);
 
-    // バフ表示用の要素を追加
     if(!document.getElementById("jigane-buff-display")) {
         const buffDiv = document.createElement("div");
         buffDiv.id = "jigane-buff-display";
         document.querySelector(".action-panel").prepend(buffDiv);
     }
 
-    // レベル選択UIの挿入（無ければ）
     if(!document.getElementById("artisan-level")) {
         const levelSelect = document.createElement("select");
         levelSelect.id = "artisan-level";
@@ -1009,9 +1001,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
         await loadRecipeData();
         renderRecipeList();
-        document.getElementById("btn-load-recipes").addEventListener("click", () => {
-            renderRecipeList();
-        });
     } catch (e) {
         document.getElementById("recipe-list").innerHTML = `<li style="color:red">エラー: レシピの読み込みに失敗しました。</li>`;
     }
@@ -1070,9 +1059,6 @@ function updateStatusUI() {
     document.getElementById("jigane-buff-display").textContent = buffText;
 }
 
-// -------------------------
-// 新グリッド描画システム
-// -------------------------
 function renderGrid() {
     const gridContainer = document.getElementById("smithing-grid");
     gridContainer.innerHTML = "";
@@ -1127,14 +1113,13 @@ function renderGrid() {
                 wrapper.classList.add("blank");
             }
             
-            wrapper.addEventListener("click", (e) => {
+            wrapper.addEventListener("click", () => {
                 if (currentActionState !== "skillSelected") {
                     alert("先にスキルを選んでください。"); return;
                 }
                 handleGridClick(parseInt(wrapper.dataset.x), parseInt(wrapper.dataset.y));
             });
 
-            // ホバー時のターゲティング表示
             wrapper.addEventListener("mouseenter", () => {
                 if (currentActionState === "skillSelected" && selectedSkill) {
                     document.querySelectorAll('.forge-cell-container').forEach(c => c.classList.remove('targeting'));
@@ -1156,7 +1141,6 @@ function renderGrid() {
     }
 }
 
-// カーソル枠の取得（はみ出し厳格チェック）
 function getHitCoords(skillName, ox, oy, layout) {
     if (ox >= layout.w || oy >= layout.h) return null;
     let coords = [];
@@ -1170,19 +1154,17 @@ function getHitCoords(skillName, ox, oy, layout) {
         if (ox + 1 >= layout.w) return null;
         coords = [{x: ox, y: oy}, {x: ox+1, y: oy}];
     } else if (skillName === "ななめ打ち") {
-        // 右上(ox+1, oy) と 左下(ox, oy+1) のみ許可
         if (ox + 1 >= layout.w || oy + 1 >= layout.h) return null;
         coords = [{x: ox+1, y: oy}, {x: ox, y: oy+1}];
     } else if (["4連打ち", "超4連打ち"].includes(skillName)) {
         if (ox + 1 >= layout.w || oy + 1 >= layout.h) return null;
         coords = [{x: ox, y: oy}, {x: ox+1, y: oy}, {x: ox, y: oy+1}, {x: ox+1, y: oy+1}];
     } else {
-        return []; // みだれ打ちなどはUIでクリック不要なので後処理
+        return [];
     }
     return coords;
 }
 
-// Coordsから実在するセルのインデックスを取得
 function getHitCellsFromCoords(coords, layout) {
     if(!coords) return null;
     let cells = [];
@@ -1230,14 +1212,6 @@ function resetSelectionState() {
     setupSkills();
 }
 
-function abortAICalculation() {
-    currentAiCalcId++;
-    const aiBox = document.getElementById("ai-suggestion");
-    if (aiBox && aiBox.textContent.includes("AI思考中")) {
-        aiBox.textContent = "手動操作を検知したため、AI予測を中断しました。";
-    }
-}
-
 function handleSkillSelect(skill) {
     abortAICalculation(); 
 
@@ -1269,7 +1243,6 @@ function handleGridClick(x, y) {
     const coords = getHitCoords(selectedSkill.name, x, y, layout);
     const hitCells = getHitCellsFromCoords(coords, layout);
     
-    // はみ出し、または実在するマスが1つも無い場合は無効
     if (hitCells === null || hitCells.length === 0) {
         alert("その位置には打てません！（枠がはみ出しているか、対象マスがありません）");
         return;
@@ -1277,7 +1250,6 @@ function handleGridClick(x, y) {
     
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState, turn: turnCount, buffD: buffDouble, buffH: buffHalf, buffFH: buffFocusHalf, buffFC: buffFocusCrit, shine: shiningCellIdx}));
     
-    // ロックされていないマスだけをキューに追加
     multiHitQueue = hitCells.filter(idx => !gridState[idx].isLocked);
     multiHitResults = [];
     
@@ -1302,7 +1274,6 @@ function executeRandomSkill() {
     history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState, turn: turnCount, buffD: buffDouble, buffH: buffHalf, buffFH: buffFocusHalf, buffFC: buffFocusCrit, shine: shiningCellIdx}));
     currentFocus -= selectedSkill.actualCost;
     
-    // 完全にランダムに4回選ぶ（ロックされているマスにも吸われる）
     multiHitQueue = [];
     for(let i=0; i<4; i++) {
         multiHitQueue.push(Math.floor(Math.random() * gridState.length));
@@ -1318,7 +1289,6 @@ function showNextMiniPopup() {
     }
 
     const tIndex = multiHitQueue[0];
-    // ロック済マスにみだれうちが吸われた場合はスキップ処理（ダメージ0）
     if (gridState[tIndex].isLocked) {
         multiHitResults.push({ target: tIndex, value: 0, isCrit: false });
         multiHitQueue.shift();
@@ -1370,7 +1340,6 @@ function showNextMiniPopup() {
     });
     floatUI.appendChild(btnGroupCrit);
 
-    // 手入力
     let manualBtn = document.createElement("button");
     manualBtn.className = "float-btn manual-btn";
     manualBtn.innerHTML = "手入力 (選択肢にない場合)";
@@ -1407,7 +1376,7 @@ function showNextMiniPopup() {
 function recordCellResult(val, isCrit) {
     const tIndex = multiHitQueue.shift(); 
     multiHitResults.push({ target: tIndex, value: val, isCrit: isCrit });
-    if(shiningCellIdx === tIndex) shiningCellIdx = -1; // 光消費
+    if(shiningCellIdx === tIndex) shiningCellIdx = -1;
     showNextMiniPopup(); 
 }
 
@@ -1415,7 +1384,7 @@ function finalizeMultiHit() {
     if (selectedSkill.type !== "random") currentFocus -= selectedSkill.actualCost;
     
     multiHitResults.forEach(res => {
-        if(res.value === 0) return; // ロック被弾
+        if(res.value === 0) return;
         gridState[res.target].value += res.value;
         const endVal = gridState[res.target].value;
         
@@ -1432,9 +1401,6 @@ function finalizeMultiHit() {
     checkJiganeTriggersAndEnd(tempDrop);
 }
 
-// -------------------------
-// ダメージ分布計算 (DQX近似)
-// -------------------------
 function getExactDamageDistribution(temp, mult) {
     const bMin = Math.floor(temp / 200) + 7 + (temp >= 1600 ? 1 : 0);
     const bMax = Math.floor(temp / 100) + 8 - (temp >= 2000 ? 1 : 0);
@@ -1445,9 +1411,6 @@ function getExactDamageDistribution(temp, mult) {
     return [...new Set(dist.map(v => Math.floor(v * mult)))].sort((a,b)=>a-b);
 }
 
-// -------------------------
-// 地金トリガー判定と終了判定
-// -------------------------
 function checkJiganeTriggersAndEnd(tempDrop) {
     turnCount++;
     buffDouble = false; buffHalf = false; buffFocusHalf = false; buffFocusCrit = false;
@@ -1457,19 +1420,17 @@ function checkJiganeTriggersAndEnd(tempDrop) {
         return;
     }
     
-    // 一気に通り越した場合は発動しない仕様
     if (currentTemp % 200 === 0 && tempDrop > 0) {
         const j = currentRecipe.jiganeType;
         if (j === "戻り") {
             let valid = gridState.map((s, i) => ({s, i})).filter(x => x.s.value > 0 && !(x.s.min <= x.s.value && x.s.value <= x.s.max));
             if (valid.length > 0) {
-                // はみ出ている場所優先
                 let over = valid.filter(x => x.s.value > x.s.max);
                 let targets = over.length > 0 ? over : valid;
                 let maxVal = Math.max(...targets.map(x => x.s.value));
                 let candidates = targets.filter(x => x.s.value === maxVal);
                 let target = candidates[Math.floor(Math.random() * candidates.length)];
-                let ret = Math.floor(Math.random() * 5) + 12; // 12~16
+                let ret = Math.floor(Math.random() * 5) + 12;
                 alert(`【戻り地金 発動】マス[${target.i+1}] が ${ret} 戻りました！`);
                 gridState[target.i].value = Math.max(0, gridState[target.i].value - ret);
             }
@@ -1510,9 +1471,6 @@ function executeFinish() {
     resetSelectionState();
 }
 
-// -------------------------
-// 高速概算AI (Ver 12.0)
-// -------------------------
 async function calculateAI() {
     currentAiCalcId++;
     const myCalcId = currentAiCalcId;
@@ -1523,7 +1481,6 @@ async function calculateAI() {
     aiSuggestedMove = null;
     await new Promise(resolve => setTimeout(resolve, 10)); 
     
-    // AI目標温度の設定
     let maxShortfall = 0;
     gridState.forEach(s => {
         if (s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
@@ -1536,7 +1493,6 @@ async function calculateAI() {
         if (maxTempInHistory - currentTemp >= 100) isCooling = true;
     }
 
-    // 全合法手の生成（グリッド指定を全て展開）
     let legalMoves = [];
     const layout = EQUIP_LAYOUTS[currentRecipe.category];
     
@@ -1550,7 +1506,7 @@ async function calculateAI() {
     if (hasUnlocked && allInZone) legalMoves.push({ skill: SKILLS.find(s=>s.type==="finish"), ox: 0, oy: 0, cells: [] });
     
     SKILLS.forEach(skill => {
-        if (skill.type === "finish" || playerLevel < skill.req_lv) return;
+        if (skill.type === "finish" || playerLevel < skill.reqLevel) return;
         if (skill.name === "火力上げ" && (currentTemp >= optimalTemp || isCooling)) return;
         if (skill.name === "冷やし込み" && currentTemp <= 1000) return;
         
