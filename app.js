@@ -937,8 +937,9 @@ const RECIPES = [
   }
 ];
 
-function loadRecipeData() {
-    return Promise.resolve();
+async function loadRecipeData() {
+    // 既にRECIPESが定義されているため、そのまま正常終了させる
+    return Promise.resolve(RECIPES);
 }
 
 // -------------------------
