@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - AI事前解析・ななめ打ち修正版
+// app.js - Ver 12.0 (完全仕様・DQXガチシミュレータ版)
 // ==========================================
-const UPDATE_VERSION = "Ver 11.0 (AI事前シミュレーション搭載)";
+const UPDATE_VERSION = "Ver 12.0 (完全仕様対応・DQXガチシミュレータ)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -15,61 +15,105 @@ style.innerHTML = `
 .float-btn.crit-val { border-color: #aa9900; color: #ffeb3b; background: #333; font-weight: bold; }
 .float-btn.crit-val:hover { background: #ffeb3b; color: black; }
 .float-btn.manual-btn { background: #222; color: #aaa; width: 100%; margin-top: 10px; font-size: 0.8em; border: 1px dotted #555; padding: 6px; }
-.forge-cell { position: relative; }
-.forge-cell.targeting { border-color: #00bcd4; box-shadow: 0 0 12px #00bcd4; cursor: pointer; }
-.forge-cell.targeting:hover { background: rgba(0, 188, 212, 0.2); }
-.forge-cell.ai-suggested { border-color: #ff4081; animation: pulse 1.5s infinite; }
-.cell-lock-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; text-shadow: 0 0 5px #000; pointer-events: none; z-index: 10; }
-@keyframes pulse { 0% { box-shadow: 0 0 5px #ff4081; } 50% { box-shadow: 0 0 15px #ff4081; } 100% { box-shadow: 0 0 5px #ff4081; } }
-#action-guide { text-align: center; font-weight: bold; color: #00bcd4; margin-bottom: 10px; min-height: 20px; }
-.skill-btn.finish-btn { background: #4CAF50; border-color: #388E3C; font-weight: bold; }
-.skill-btn.finish-btn:hover { background: #66BB6A; }
 
-/* AI解析モーダル用スタイル */
-#precompute-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; font-family: monospace; }
-#precompute-overlay.hidden { display: none; }
-.progress-bar { width: 80%; max-width: 400px; height: 20px; background: #222; border: 2px solid #555; border-radius: 10px; overflow: hidden; margin-top: 20px; }
-.progress-fill { width: 0%; height: 100%; background: #00bcd4; box-shadow: 0 0 10px #00bcd4; transition: width 0.1s; }
-#precompute-log { margin-top: 20px; padding: 10px; width: 80%; max-width: 500px; height: 200px; background: #111; border: 1px solid #444; overflow-y: auto; font-size: 0.9em; color: #0f0; border-radius: 5px; }
-#btn-start-smithing { margin-top: 20px; padding: 10px 20px; font-size: 1.2em; background: #e09f3e; color: black; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; display: none; }
-#btn-start-smithing:hover { background: #ffb74d; }
+/* グリッドレイアウト用 */
+#smithing-grid { display: grid; gap: 4px; justify-content: center; margin: 20px auto; padding: 10px; background: #222; border-radius: 8px; width: fit-content; }
+.forge-cell-container { width: 60px; height: 180px; position: relative; }
+.forge-cell-container.blank { background: rgba(255,255,255,0.05); border: 1px dashed #444; cursor: pointer; }
+.forge-cell { width: 100%; height: 100%; position: absolute; top:0; left:0; background: #333; border: 2px solid #555; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.forge-cell-container.targeting { border-color: #00bcd4; box-shadow: 0 0 12px #00bcd4 inset; }
+.forge-cell-container.targeting:hover { background: rgba(0, 188, 212, 0.2); }
+.forge-cell.ai-suggested { border-color: #ff4081; box-shadow: 0 0 15px #ff4081 inset; animation: pulse 1.5s infinite; }
+.gauge-target-zone { position: absolute; width: 100%; background: rgba(76, 175, 80, 0.4); border-top: 2px solid #4CAF50; border-bottom: 2px solid #4CAF50; z-index: 1; }
+.gauge-fill { width: 100%; background: #e09f3e; transition: height 0.3s ease-out, background-color 0.3s; z-index: 2; position: absolute; bottom: 0; }
+.gauge-text { position: absolute; width: 100%; text-align: center; top: 5px; color: white; font-weight: bold; text-shadow: 1px 1px 2px black; z-index: 3; }
+.cell-lock-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; text-shadow: 0 0 5px #000; pointer-events: none; z-index: 10; }
+.shining-cell { box-shadow: 0 0 20px #ffeb3b inset; border-color: #ffeb3b; animation: flash 1s infinite alternate; }
+
+#jigane-buff-display { text-align: center; font-weight: bold; color: #ffeb3b; margin: 10px; min-height: 24px; font-size: 1.1em; text-shadow: 0 0 5px #000; }
+.skill-btn.finish-btn { background: #4CAF50; border-color: #388E3C; font-weight: bold; width: 100%; margin-top: 10px; }
+
+@keyframes pulse { 0% { box-shadow: 0 0 5px #ff4081 inset; } 50% { box-shadow: 0 0 15px #ff4081 inset; } 100% { box-shadow: 0 0 5px #ff4081 inset; } }
+@keyframes flash { from { opacity: 0.8; } to { opacity: 1; } }
 `;
 document.head.appendChild(style);
 
-if (!SKILLS.find(s => s.name === "しあげる (完成)")) {
-    SKILLS.push({ id: "しあげる", name: "しあげる (完成)", type: "finish", mult: 0, focus: 0, reqLevel: 1 });
-}
+// -------------------------
+// 定数・マスタデータ定義
+// -------------------------
+const FOCUS_BY_LEVEL = {
+    75: 197, 76: 199, 77: 201, 78: 203, 79: 205, 80: 207
+};
 
+// 0: 空白マス, 1: 叩けるマス
+const EQUIP_LAYOUTS = {
+    "アタマ":   { w: 2, h: 2, map: [1,1, 1,1] },
+    "小盾":     { w: 2, h: 2, map: [1,1, 1,1] },
+    "大盾":     { w: 2, h: 2, map: [1,1, 1,1] },
+    "からだ上": { w: 2, h: 2, map: [1,1, 1,1] },
+    "からだ下": { w: 2, h: 4, map: [1,1, 1,1, 1,1, 1,1] },
+    "ウデ":     { w: 1, h: 3, map: [1, 1, 1] },
+    "足":       { w: 2, h: 3, map: [0,1, 0,1, 1,1] } // 上段右, 中段右, 下段左, 下段右
+};
+
+const THRESHOLDS = {
+    "小盾":     {s3: 3, s2: 9, s1: 17}, "大盾":     {s3: 3, s2: 9, s1: 17},
+    "アタマ":   {s3: 3, s2: 9, s1: 17}, "からだ上": {s3: 7, s2: 14, s1: 25},
+    "からだ下": {s3: 10, s2: 18, s1: 33}, "ウデ":     {s3: 2, s2: 8, s1: 13},
+    "足":       {s3: 4, s2: 10, s1: 17}
+};
+
+const SKILLS = [
+    { name: "たたく",       req_lv: 1,  cost: 5,  mult: 1.0, type: "single" },
+    { name: "2倍打ち",      req_lv: 5,  cost: 8,  mult: 2.0, type: "single" },
+    { name: "3倍打ち",      req_lv: 16, cost: 11, mult: 3.0, type: "single" },
+    { name: "てかげん打ち", req_lv: 3,  cost: 10, mult: 0.5, type: "single" },
+    { name: "ねらい打ち",   req_lv: 23, cost: 16, mult: 1.0, type: "single", crit_up: "nerai" },
+    { name: "弱ねらい打ち", req_lv: 75, cost: 20, mult: 0.5, type: "single", crit_up: "nerai" },
+    { name: "熱風おろし",   req_lv: 47, cost: 6,  mult: 2.5, type: "single", temp_drop: 150 },
+    { name: "上下打ち",     req_lv: 2,  cost: 8,  mult: 1.2, type: "multi" },
+    { name: "左右打ち",     req_lv: 80, cost: 8,  mult: 1.2, type: "multi" },
+    { name: "ななめ打ち",   req_lv: 38, cost: 7,  mult: 1.2, type: "multi" },
+    { name: "4連打ち",      req_lv: 11, cost: 12, mult: 1.2, type: "multi" },
+    { name: "超4連打ち",    req_lv: 27, cost: 18, mult: 2.0, type: "multi" },
+    { name: "みだれ打ち",   req_lv: 13, cost: 7,  mult: 0.8, type: "random" },
+    { name: "火力上げ",     req_lv: 7,  cost: 10, mult: 0.0, type: "temp", temp_change: 300 },
+    { name: "冷やし込み",   req_lv: 33, cost: 12, mult: 0.0, type: "temp", temp_change: -300 },
+    { name: "しあげる",     req_lv: 1,  cost: 0,  mult: 0.0, type: "finish" }
+];
+
+// -------------------------
+// 状態変数
+// -------------------------
 let currentRecipe = null;
 let currentTemp = 1000;
 let currentFocus = 0;
 let maxFocus = 0;
-let gridState = []; 
+let playerLevel = 80;
+let gridState = []; // 実在するマスのみの配列
 let history = []; 
+let turnCount = 0;
+
+// バフ状態
+let buffDouble = false;
+let buffHalf = false;
+let buffFocusHalf = false;
+let buffFocusCrit = false;
+let shiningCellIdx = -1;
 
 let currentActionState = "idle";
 let selectedSkill = null;
 let aiSuggestedMove = null;
-
 let multiHitQueue = [];
 let multiHitResults = [];
 
+// AI用
 let currentAiCalcId = 0;
 let lastYieldTime = 0;
 
-// AIが事前解析で決定したグローバルな戦略設定
-let aiStrategy = {
-    optimalTemp: 1000
-};
-
-function abortAICalculation() {
-    currentAiCalcId++;
-    const aiBox = document.getElementById("ai-suggestion");
-    if (aiBox && aiBox.textContent.includes("AI思考中")) {
-        aiBox.textContent = "手動操作を検知したため、AI予測を中断しました。";
-    }
-}
-
+// -------------------------
+// 初期化処理
+// -------------------------
 document.addEventListener("DOMContentLoaded", async () => {
     const titleEl = document.querySelector("h1");
     if (titleEl) titleEl.textContent = `防具鍛冶ツール - ${UPDATE_VERSION}`;
@@ -79,370 +123,233 @@ document.addEventListener("DOMContentLoaded", async () => {
     floatUI.className = "hidden";
     document.body.appendChild(floatUI);
 
-    // AI解析オーバーレイの追加
-    const precomputeOverlay = document.createElement("div");
-    precomputeOverlay.id = "precompute-overlay";
-    precomputeOverlay.className = "hidden";
-    precomputeOverlay.innerHTML = `
-        <h2 style="color:#00bcd4; margin-bottom:10px;">🤖 AIレシピ解析・戦略立案中...</h2>
-        <p>最適な目標温度と集中力配分をシミュレーションしています。</p>
-        <div class="progress-bar"><div class="progress-fill" id="precompute-fill"></div></div>
-        <div id="precompute-log"></div>
-        <button id="btn-start-smithing">この戦略で鍛冶を開始する</button>
-    `;
-    document.body.appendChild(precomputeOverlay);
+    // バフ表示用の要素を追加
+    if(!document.getElementById("jigane-buff-display")) {
+        const buffDiv = document.createElement("div");
+        buffDiv.id = "jigane-buff-display";
+        document.querySelector(".action-panel").prepend(buffDiv);
+    }
+
+    // レベル選択UIの挿入（無ければ）
+    if(!document.getElementById("artisan-level")) {
+        const levelSelect = document.createElement("select");
+        levelSelect.id = "artisan-level";
+        for(let i=75; i<=80; i++) {
+            const opt = document.createElement("option");
+            opt.value = i; opt.textContent = `Lv${i}`;
+            if(i===80) opt.selected = true;
+            levelSelect.appendChild(opt);
+        }
+        document.querySelector(".action-panel").prepend(levelSelect);
+    }
 
     try {
         await loadRecipeData();
         renderRecipeList();
-        
-        document.getElementById("filter-type").addEventListener("change", renderRecipeList);
-        document.getElementById("filter-jigane").addEventListener("change", renderRecipeList);
-        document.getElementById("filter-crystal").addEventListener("change", renderRecipeList);
-        document.getElementById("btn-load-recipes").addEventListener("click", async () => {
-            document.getElementById("recipe-list").innerHTML = '<li class="loading">再読み込み中...</li>';
-            await loadRecipeData();
+        document.getElementById("btn-load-recipes").addEventListener("click", () => {
             renderRecipeList();
         });
-        
-        document.getElementById("btn-auto-execute").addEventListener("click", () => {
-            if (!aiSuggestedMove || !aiSuggestedMove.skill) return;
-            handleSkillSelect(aiSuggestedMove.skill);
-            
-            if (aiSuggestedMove.skill.type !== "temp" && aiSuggestedMove.skill.type !== "finish") {
-                let target = Array.isArray(aiSuggestedMove.targets) ? aiSuggestedMove.targets[0] : aiSuggestedMove.targets;
-                if (target !== undefined) {
-                    setTimeout(() => handleCellClick(target, true), 10);
-                }
-            }
-        });
     } catch (e) {
-        document.getElementById("recipe-list").innerHTML = `<li style="color:red">エラー: ${e.message}</li>`;
+        document.getElementById("recipe-list").innerHTML = `<li style="color:red">エラー: レシピの読み込みに失敗しました。</li>`;
     }
 });
 
 function renderRecipeList() {
     const listElement = document.getElementById("recipe-list");
-    listElement.innerHTML = window.recipeLoadWarning || ""; 
-    const filteredRecipes = RECIPES.filter(recipe => {
-        const type = document.getElementById("filter-type").value;
-        const jigane = document.getElementById("filter-jigane").value;
-        const crystal = document.getElementById("filter-crystal").checked;
-        if (type !== "all" && recipe.category !== type) return false;
-        if (jigane !== "all" && recipe.jiganeType !== jigane) return false;
-        if (crystal && !recipe.isCrystal) return false;
-        return true;
-    });
-
-    if (filteredRecipes.length === 0) { listElement.innerHTML += "<li>レシピが見つかりません。</li>"; return; }
-    filteredRecipes.forEach(recipe => {
+    listElement.innerHTML = ""; 
+    RECIPES.forEach(recipe => {
         const li = document.createElement("li");
-        li.innerHTML = `<strong>${recipe.name}</strong> <span class="recipe-meta">( ${recipe.category} / 装備Lv${recipe.equipLv} / 地金: ${recipe.jiganeType} )</span>`;
-        li.addEventListener("click", () => initSmithingWithPrecompute(recipe));
+        li.innerHTML = `<strong>${recipe.name}</strong> ( ${recipe.category} / 地金: ${recipe.jiganeType} )`;
+        li.addEventListener("click", () => startSmithing(recipe));
         listElement.appendChild(li);
     });
 }
 
-// ----------------------------------------------------
-// 【新規】 事前解析（プレコンピュート）の実行
-// ----------------------------------------------------
-async function initSmithingWithPrecompute(recipe) {
+function startSmithing(recipe) {
     currentRecipe = recipe;
     document.getElementById("current-recipe-name").textContent = recipe.name;
     document.getElementById("display-jigane").textContent = `地金: ${recipe.jiganeType}`;
-    const level = parseInt(document.getElementById("artisan-level").value) || 80;
-    maxFocus = (FOCUS_BY_LEVEL[level] || 207) + 45; 
     
-    // オーバーレイ表示
-    const overlay = document.getElementById("precompute-overlay");
-    const logEl = document.getElementById("precompute-log");
-    const fillEl = document.getElementById("precompute-fill");
-    const btnStart = document.getElementById("btn-start-smithing");
-    
-    overlay.classList.remove("hidden");
-    btnStart.style.display = "none";
-    logEl.innerHTML = "";
-    fillEl.style.width = "0%";
-    
-    // 解析用の目標温度候補（地金が光なら1900以上も候補）
-    const tempCandidates = recipe.jiganeType === "光" ? [1000, 1300, 1600, 1900, 2200] : [1000, 1300, 1600, 1900];
-    const simulationsPerTemp = 40; // 各温度で何回シミュレーションするか
-    const totalSims = tempCandidates.length * simulationsPerTemp;
-    let completedSims = 0;
-    
-    let bestStrategyScore = -Infinity;
-    let bestStrategyTemp = 1000;
-    
-    function log(msg) {
-        logEl.innerHTML += `<div>${msg}</div>`;
-        logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    log(`[AI初期化] レシピ「${recipe.name}」の構造を解析中...`);
-    log(`[AI準備] 基準HP、地金特性、レベル${level}での最適集中力配分を計算します。`);
-    await new Promise(r => setTimeout(r, 800)); // 演出ウェイト
-
-    for (const targetTemp of tempCandidates) {
-        log(`<br><span style="color:#e09f3e;">>> 目標温度 ${targetTemp}℃ 戦略をシミュレーション開始...</span>`);
-        let totalScoreForTemp = 0;
-        
-        for (let i = 0; i < simulationsPerTemp; i++) {
-            // シミュレーション1回実行
-            let score = simulateOneGame(recipe, targetTemp, maxFocus, level);
-            totalScoreForTemp += score;
-            completedSims++;
-            
-            // 描画更新とプログレスバー
-            if (i % 5 === 0) {
-                fillEl.style.width = `${(completedSims / totalSims) * 100}%`;
-                await new Promise(r => setTimeout(r, 10)); 
-            }
-        }
-        
-        let avgScore = totalScoreForTemp / simulationsPerTemp;
-        log(`-- 目標 ${targetTemp}℃ の平均期待値スコア: ${Math.floor(avgScore)}`);
-        
-        if (avgScore > bestStrategyScore) {
-            bestStrategyScore = avgScore;
-            bestStrategyTemp = targetTemp;
-        }
-    }
-    
-    fillEl.style.width = "100%";
-    aiStrategy.optimalTemp = bestStrategyTemp;
-    
-    log(`<br><span style="color:#4CAF50; font-size:1.1em; font-weight:bold;">[解析完了] 決定された最適目標温度: ${aiStrategy.optimalTemp}℃</span>`);
-    log(`※AIはこの温度をゴールとして無駄な火力上げを行わずに進行します。`);
-    
-    btnStart.style.display = "block";
-    btnStart.onclick = () => {
-        overlay.classList.add("hidden");
-        startSmithingCore(recipe, level);
-    };
-}
-
-// プレコンピュート用の簡易AIシミュレータ
-function simulateOneGame(recipe, optimalTemp, focus, level) {
-    let state = recipe.targets.map(t => ({ value: 0, min: t.min, max: t.max, isLocked: false }));
-    let temp = 1000;
-    let currentFocus = focus;
-    
-    let critRateBase = 0.056; // 簡易的に一律設定
-    
-    for (let turn = 0; turn < 40; turn++) { // 最大40ターン
-        let moves = getLegalMoves(state, temp, currentFocus, optimalTemp, recipe, level);
-        if (moves.length === 0) break;
-        
-        // 1手先読みで一番良さそうな手を選ぶ（簡易グリーディ）
-        let bestMove = null;
-        let bestScore = -Infinity;
-        for (const m of moves) {
-            if (m.skill.type === "finish") {
-                let sc = evaluateStateScore(state, temp, currentFocus - m.skill.focus, optimalTemp);
-                if (sc > bestScore) { bestScore = sc; bestMove = m; }
-                continue;
-            }
-            if (m.skill.type === "temp") {
-                let nTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + m.skill.tempChange));
-                let sc = evaluateStateScore(state, nTemp, currentFocus - m.skill.focus, optimalTemp) - 500;
-                if (sc > bestScore) { bestScore = sc; bestMove = m; }
-                continue;
-            }
-            // 攻撃スキルの簡易評価
-            let dist = getDamageDistribution(temp, m.skill.mult);
-            if (dist.length > 0) {
-                let avg = (dist[0] + dist[dist.length-1])/2;
-                let nState = cloneState(state);
-                if (m.skill.type === "random") {
-                    let unl = nState.filter(s=>!s.isLocked);
-                    if(unl.length > 0) {
-                        unl.forEach(s => s.value += avg * (4/nState.length));
-                    }
-                } else {
-                    m.targets.forEach(t => { if(!nState[t].isLocked) nState[t].value += avg; });
-                }
-                let sc = evaluateStateScore(nState, temp-50, currentFocus - m.skill.focus, optimalTemp);
-                if (sc > bestScore) { bestScore = sc; bestMove = m; }
-            }
-        }
-        
-        if (!bestMove || bestMove.skill.type === "finish") break;
-        
-        // 選ばれたスキルを実行して盤面を更新
-        currentFocus -= bestMove.skill.focus;
-        if (bestMove.skill.type === "temp") {
-            temp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + bestMove.skill.tempChange));
-        } else {
-            let dist = getDamageDistribution(temp, bestMove.skill.mult);
-            if (dist.length > 0) {
-                let actualDmg = dist[Math.floor(Math.random() * dist.length)];
-                let isCrit = Math.random() < critRateBase;
-                if (bestMove.skill.isCritUp) isCrit = Math.random() < (critRateBase + 0.25);
-                let dmg = actualDmg * (isCrit ? 2 : 1);
-                
-                if (bestMove.skill.type === "random") {
-                    for(let r=0; r<4; r++) {
-                        let targetIdx = Math.floor(Math.random() * state.length);
-                        if (!state[targetIdx].isLocked) state[targetIdx].value += (dmg / 4); // 簡易均等化
-                    }
-                } else {
-                    bestMove.targets.forEach(t => {
-                        if (!state[t].isLocked) state[t].value += dmg;
-                    });
-                }
-            }
-            temp -= (bestMove.skill.specialTempDrop || 50);
-        }
-        if (temp < MIN_TEMP) temp = MIN_TEMP;
-    }
-    
-    return evaluateStateScore(state, temp, currentFocus, optimalTemp);
-}
-
-// ----------------------------------------------------
-// 【メイン】 鍛冶スタート処理
-// ----------------------------------------------------
-function startSmithingCore(recipe, level) {
-    currentTemp = 1000;
+    playerLevel = parseInt(document.getElementById("artisan-level").value) || 80;
+    maxFocus = (FOCUS_BY_LEVEL[playerLevel] || 207) + 45; 
     currentFocus = maxFocus;
+    currentTemp = 1000;
+    turnCount = 0;
+    
+    buffDouble = false; buffHalf = false; buffFocusHalf = false; buffFocusCrit = false; shiningCellIdx = -1;
+
     gridState = [];
-    recipe.targets.forEach(target => gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false }));
+    recipe.targets.forEach(target => {
+        gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false, baseTarget: (target.min+target.max)/2 });
+    });
     history = [];
-    
-    abortAICalculation(); 
-    
-    if(!document.getElementById("action-guide")) {
-        const guide = document.createElement("div");
-        guide.id = "action-guide";
-        document.querySelector(".action-panel").prepend(guide);
-    }
     
     resetSelectionState();
     updateStatusUI();
     renderGrid();
-    setupSkills(level);
+    setupSkills();
     
     document.getElementById("scene-select").classList.remove("active");
     document.getElementById("scene-smithing").classList.add("active");
     calculateAI();
 }
 
-// ----------------------------------------------------
-// 【修正】 ななめ打ちの厳格化（/方向のみ）
-// ----------------------------------------------------
-function getMultiHitTargets(skillName, startIndex, stateArray) {
-    const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
-    const cols = layout.cols;
-    const rows = layout.rows || Math.ceil(stateArray.length / cols);
-    let targets = [startIndex];
-    
-    if (skillName === "上下打ち") {
-        let down = startIndex + cols;
-        if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
-    } else if (skillName === "左右打ち") {
-        if ((startIndex % cols) !== (cols - 1)) {
-            let right = startIndex + 1;
-            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
-        }
-    } else if (skillName === "4連打ち" || skillName === "超4連打ち") {
-        let right = startIndex + 1;
-        let down = startIndex + cols;
-        let downright = startIndex + cols + 1;
-        if ((startIndex % cols) !== (cols - 1)) {
-            if (right < stateArray.length && layout.cells[right] !== null && !stateArray[right].isLocked) targets.push(right);
-            if (down < stateArray.length && layout.cells[down] !== null && !stateArray[down].isLocked) targets.push(down);
-            if (downright < stateArray.length && layout.cells[downright] !== null && !stateArray[downright].isLocked) targets.push(downright);
-        }
-    } else if (skillName === "ななめ打ち") {
-        targets = [];
-        let r = Math.floor(startIndex / cols);
-        let c = startIndex % cols;
-        
-        // / 方向のペア (右上 と 左下) のみ許可
-        // 自分が右上(c > 0, r < rows-1)なら、左下を探す
-        if (c > 0 && r < rows - 1) {
-            targets = [startIndex, startIndex + cols - 1];
-        } 
-        // 自分が左下(c < cols-1, r > 0)なら、右上を探す
-        else if (c < cols - 1 && r > 0) {
-            targets = [startIndex, startIndex - cols + 1];
-        }
-        
-        // 有効なマス（nullでなく、ロックされていない）だけを返す
-        targets = targets.filter(t => stateArray[t] !== undefined && layout.cells[t] !== null && !stateArray[t].isLocked);
-    }
-    return [...new Set(targets)]; 
-}
-
-// ==========================================
-// 通常のUI・計算処理 (Ver 10.0と同じ)
-// ==========================================
-// ... (既存の setupSkills, renderGrid, handleCellClick などのUI処理は全く同じまま)
-
 function updateStatusUI() {
     document.getElementById("current-temp").textContent = currentTemp;
     document.getElementById("current-focus").textContent = currentFocus;
     document.getElementById("max-focus").textContent = maxFocus;
+
+    let buffText = "";
+    if (buffDouble) buffText = "🔥 全マス威力2倍ターン！";
+    if (buffHalf) buffText = "💧 全マス威力半減ターン！";
+    if (buffFocusHalf) buffText = "✨ 消費集中力 半減ターン！";
+    if (buffFocusCrit) buffText = "⚡ 集中力1.5倍 ＆ 会心率大幅UPターン！";
+    document.getElementById("jigane-buff-display").textContent = buffText;
 }
 
+// -------------------------
+// 新グリッド描画システム
+// -------------------------
 function renderGrid() {
     const gridContainer = document.getElementById("smithing-grid");
     gridContainer.innerHTML = "";
-    const layout = EQUIP_LAYOUTS[currentRecipe.category] || { rows: 2, cols: 2, cells: ["A","B","C","D"] };
-    gridContainer.style.gridTemplateColumns = `repeat(${layout.cols}, 60px)`;
     
-    let targetIndex = 0;
-    layout.cells.forEach((cellName) => {
-        if (cellName === null) {
-            gridContainer.appendChild(document.createElement("div"));
-            return;
+    const layout = EQUIP_LAYOUTS[currentRecipe.category];
+    if(!layout) return;
+
+    gridContainer.style.gridTemplateColumns = `repeat(${layout.w}, 60px)`;
+    gridContainer.style.gridTemplateRows = `repeat(${layout.h}, 180px)`;
+    
+    let cellIndex = 0;
+    
+    for (let y = 0; y < layout.h; y++) {
+        for (let x = 0; x < layout.w; x++) {
+            const isRealCell = layout.map[y * layout.w + x] === 1;
+            
+            const wrapper = document.createElement("div");
+            wrapper.className = "forge-cell-container";
+            wrapper.dataset.x = x;
+            wrapper.dataset.y = y;
+            
+            if (isRealCell) {
+                const state = gridState[cellIndex];
+                const cellDiv = document.createElement("div");
+                cellDiv.className = "forge-cell";
+                cellDiv.id = `forge-cell-${cellIndex}`;
+                
+                if (state.isLocked) {
+                    cellDiv.style.borderColor = "#ffeb3b";
+                    cellDiv.innerHTML += `<div class="cell-lock-icon">🔒</div>`;
+                } 
+                if (shiningCellIdx === cellIndex) cellDiv.classList.add("shining-cell");
+
+                if (aiSuggestedMove && aiSuggestedMove.cells && aiSuggestedMove.cells.includes(cellIndex)) {
+                    cellDiv.classList.add("ai-suggested");
+                }
+                
+                const absoluteMax = state.max * 1.2;
+                const fillHeight = Math.min(100, (state.value / absoluteMax) * 100);
+                const targetBottom = (state.min / absoluteMax) * 100;
+                const targetHeight = ((state.max - state.min) / absoluteMax) * 100;
+                
+                cellDiv.innerHTML += `
+                    <div class="gauge-target-zone" style="bottom: ${targetBottom}%; height: ${targetHeight}%;"></div>
+                    <div class="gauge-fill" style="height: ${fillHeight}%; ${state.isLocked ? 'background: #ffeb3b;' : ''}"></div>
+                    <div class="gauge-text">${Math.floor(state.value)}</div>
+                `;
+                wrapper.appendChild(cellDiv);
+                wrapper.dataset.idx = cellIndex;
+                cellIndex++;
+            } else {
+                wrapper.classList.add("blank");
+            }
+            
+            wrapper.addEventListener("click", (e) => {
+                if (currentActionState !== "skillSelected") {
+                    alert("先にスキルを選んでください。"); return;
+                }
+                handleGridClick(parseInt(wrapper.dataset.x), parseInt(wrapper.dataset.y));
+            });
+
+            // ホバー時のターゲティング表示
+            wrapper.addEventListener("mouseenter", () => {
+                if (currentActionState === "skillSelected" && selectedSkill) {
+                    document.querySelectorAll('.forge-cell-container').forEach(c => c.classList.remove('targeting'));
+                    const coords = getHitCoords(selectedSkill.name, x, y, layout);
+                    if (coords) {
+                        coords.forEach(c => {
+                            const targetWrapper = document.querySelector(`.forge-cell-container[data-x="${c.x}"][data-y="${c.y}"]`);
+                            if (targetWrapper) targetWrapper.classList.add('targeting');
+                        });
+                    }
+                }
+            });
+            wrapper.addEventListener("mouseleave", () => {
+                document.querySelectorAll('.forge-cell-container').forEach(c => c.classList.remove('targeting'));
+            });
+
+            gridContainer.appendChild(wrapper);
         }
-        if (targetIndex >= gridState.length) return;
-        
-        const state = gridState[targetIndex];
-        const cellDiv = document.createElement("div");
-        cellDiv.className = "forge-cell";
-        cellDiv.id = `forge-cell-${targetIndex}`;
-        
-        if (state.isLocked) {
-            cellDiv.style.borderColor = "#ffeb3b";
-            cellDiv.style.boxShadow = "0 0 10px #ffeb3b";
-            cellDiv.innerHTML += `<div class="cell-lock-icon">🔒</div>`;
-        } 
-        if (currentActionState === "skillSelected" && !state.isLocked) cellDiv.classList.add("targeting");
-        if (aiSuggestedMove && aiSuggestedMove.targets && aiSuggestedMove.targets.includes(targetIndex)) cellDiv.classList.add("ai-suggested");
-        
-        const absoluteMax = state.max * 1.2;
-        const fillHeight = Math.min(100, (state.value / absoluteMax) * 100);
-        const targetBottom = (state.min / absoluteMax) * 100;
-        const targetHeight = ((state.max - state.min) / absoluteMax) * 100;
-        
-        cellDiv.innerHTML += `
-            <div class="gauge-target-zone" style="bottom: ${targetBottom}%; height: ${targetHeight}%;"></div>
-            <div class="gauge-fill" style="height: ${fillHeight}%; ${state.isLocked ? 'background: #ffeb3b;' : ''}"></div>
-            <div class="gauge-text">${state.value}</div>
-        `;
-        
-        let currentIndex = targetIndex;
-        cellDiv.addEventListener("click", (e) => {
-            if (state.isLocked) { alert("このマスは本会心でロックされています！"); return; }
-            if (currentActionState === "skillSelected") handleCellClick(currentIndex, false, e);
-            else alert("先にスキルを選んでください。");
-        });
-        gridContainer.appendChild(cellDiv);
-        targetIndex++;
-    });
+    }
 }
 
-function setupSkills(level) {
+// カーソル枠の取得（はみ出し厳格チェック）
+function getHitCoords(skillName, ox, oy, layout) {
+    if (ox >= layout.w || oy >= layout.h) return null;
+    let coords = [];
+    
+    if (["たたく", "2倍打ち", "3倍打ち", "てかげん打ち", "ねらい打ち", "弱ねらい打ち", "熱風おろし"].includes(skillName)) {
+        coords = [{x: ox, y: oy}];
+    } else if (skillName === "上下打ち") {
+        if (oy + 1 >= layout.h) return null;
+        coords = [{x: ox, y: oy}, {x: ox, y: oy+1}];
+    } else if (skillName === "左右打ち") {
+        if (ox + 1 >= layout.w) return null;
+        coords = [{x: ox, y: oy}, {x: ox+1, y: oy}];
+    } else if (skillName === "ななめ打ち") {
+        // 右上(ox+1, oy) と 左下(ox, oy+1) のみ許可
+        if (ox + 1 >= layout.w || oy + 1 >= layout.h) return null;
+        coords = [{x: ox+1, y: oy}, {x: ox, y: oy+1}];
+    } else if (["4連打ち", "超4連打ち"].includes(skillName)) {
+        if (ox + 1 >= layout.w || oy + 1 >= layout.h) return null;
+        coords = [{x: ox, y: oy}, {x: ox+1, y: oy}, {x: ox, y: oy+1}, {x: ox+1, y: oy+1}];
+    } else {
+        return []; // みだれ打ちなどはUIでクリック不要なので後処理
+    }
+    return coords;
+}
+
+// Coordsから実在するセルのインデックスを取得
+function getHitCellsFromCoords(coords, layout) {
+    if(!coords) return null;
+    let cells = [];
+    let cellIdx = 0;
+    for (let y = 0; y < layout.h; y++) {
+        for (let x = 0; x < layout.w; x++) {
+            if (layout.map[y * layout.w + x] === 1) {
+                if (coords.some(c => c.x === x && c.y === y)) {
+                    cells.push(cellIdx);
+                }
+                cellIdx++;
+            }
+        }
+    }
+    return cells;
+}
+
+function setupSkills() {
     const skillList = document.getElementById("skill-list");
     skillList.innerHTML = "";
     SKILLS.forEach(skill => {
-        if (level >= skill.reqLevel) {
+        if (playerLevel >= skill.reqLevel) {
             const btn = document.createElement("button");
             btn.className = "skill-btn";
+            let cost = skill.cost;
+            if (buffFocusHalf) cost = Math.max(1, Math.floor(cost / 2));
+            else if (buffFocusCrit && skill.type !== "finish") cost = Math.floor(cost * 1.5);
+            
             if(skill.type === "finish") btn.classList.add("finish-btn");
-            btn.textContent = skill.type === "finish" ? skill.name : `${skill.name} (${skill.focus})`;
+            btn.textContent = skill.type === "finish" ? skill.name : `${skill.name} (${cost})`;
             btn.addEventListener("click", () => handleSkillSelect(skill));
             skillList.appendChild(btn);
         }
@@ -456,42 +363,88 @@ function resetSelectionState() {
     multiHitResults = [];
     document.getElementById("action-guide").textContent = "";
     document.getElementById("float-quick-input").classList.add("hidden");
-    document.getElementById("modal-input").classList.add("hidden");
     renderGrid();
+    setupSkills();
+}
+
+function abortAICalculation() {
+    currentAiCalcId++;
+    const aiBox = document.getElementById("ai-suggestion");
+    if (aiBox && aiBox.textContent.includes("AI思考中")) {
+        aiBox.textContent = "手動操作を検知したため、AI予測を中断しました。";
+    }
 }
 
 function handleSkillSelect(skill) {
     abortAICalculation(); 
 
-    if (currentFocus < skill.focus) { alert("集中力が足りません"); return; }
-    selectedSkill = skill;
+    let cost = skill.cost;
+    if (buffFocusHalf) cost = Math.max(1, Math.floor(cost / 2));
+    else if (buffFocusCrit && skill.type !== "finish") cost = Math.floor(cost * 1.5);
+
+    if (currentFocus < cost) { alert("集中力が足りません"); return; }
+    selectedSkill = { ...skill, actualCost: cost };
     
     if (skill.type === "temp") {
         if(confirm(`${skill.name} を実行しますか？`)) executeTempSkill();
     } else if (skill.type === "finish") {
-        if(confirm(`鍛冶を終了して「しあげる」を実行しますか？`)) {
-            alert("お疲れ様でした！リセットして次の練習に進んでください。");
-            resetSelectionState();
-        }
+        if(confirm(`鍛冶を終了して「しあげる」を実行しますか？`)) executeFinish();
+    } else if (skill.type === "random") {
+        if(confirm(`${skill.name} を実行しますか？`)) executeRandomSkill();
     } else {
         currentActionState = "skillSelected";
-        document.getElementById("action-guide").textContent = `🔽 【${skill.name}】を打つマスを選んでください`;
+        document.getElementById("action-guide").textContent = `🔽 【${skill.name}】の起点（左上枠）を選んでください`;
         renderGrid(); 
     }
 }
 
-function handleCellClick(targetIndex, isAuto = false, event = null) {
+function handleGridClick(x, y) {
     abortAICalculation(); 
-
     if (currentActionState !== "skillSelected" || !selectedSkill) return;
-    let targets = getMultiHitTargets(selectedSkill.name, targetIndex, gridState);
-    if(targets.length === 0) return;
     
-    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
+    const layout = EQUIP_LAYOUTS[currentRecipe.category];
+    const coords = getHitCoords(selectedSkill.name, x, y, layout);
+    const hitCells = getHitCellsFromCoords(coords, layout);
     
-    multiHitQueue = [...targets];
+    // はみ出し、または実在するマスが1つも無い場合は無効
+    if (hitCells === null || hitCells.length === 0) {
+        alert("その位置には打てません！（枠がはみ出しているか、対象マスがありません）");
+        return;
+    }
+    
+    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState, turn: turnCount, buffD: buffDouble, buffH: buffHalf, buffFH: buffFocusHalf, buffFC: buffFocusCrit, shine: shiningCellIdx}));
+    
+    // ロックされていないマスだけをキューに追加
+    multiHitQueue = hitCells.filter(idx => !gridState[idx].isLocked);
     multiHitResults = [];
     
+    if (multiHitQueue.length === 0) {
+        alert("対象マスはすべてロックされています。");
+        history.pop();
+        resetSelectionState();
+        return;
+    }
+    
+    showNextMiniPopup();
+}
+
+function executeTempSkill() {
+    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState, turn: turnCount, buffD: buffDouble, buffH: buffHalf, buffFH: buffFocusHalf, buffFC: buffFocusCrit, shine: shiningCellIdx}));
+    currentFocus -= selectedSkill.actualCost;
+    currentTemp += selectedSkill.tempChange;
+    checkJiganeTriggersAndEnd(0);
+}
+
+function executeRandomSkill() {
+    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState, turn: turnCount, buffD: buffDouble, buffH: buffHalf, buffFH: buffFocusHalf, buffFC: buffFocusCrit, shine: shiningCellIdx}));
+    currentFocus -= selectedSkill.actualCost;
+    
+    // 完全にランダムに4回選ぶ（ロックされているマスにも吸われる）
+    multiHitQueue = [];
+    for(let i=0; i<4; i++) {
+        multiHitQueue.push(Math.floor(Math.random() * gridState.length));
+    }
+    multiHitResults = [];
     showNextMiniPopup();
 }
 
@@ -502,26 +455,33 @@ function showNextMiniPopup() {
     }
 
     const tIndex = multiHitQueue[0];
-    const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-    
+    // ロック済マスにみだれうちが吸われた場合はスキップ処理（ダメージ0）
+    if (gridState[tIndex].isLocked) {
+        multiHitResults.push({ target: tIndex, value: 0, isCrit: false });
+        multiHitQueue.shift();
+        showNextMiniPopup();
+        return;
+    }
+
     const floatUI = document.getElementById("float-quick-input");
     floatUI.innerHTML = "";
     
-    const dist = getDamageDistribution(currentTemp, selectedSkill.mult);
+    let mult = selectedSkill.mult;
+    if (buffDouble) mult *= 2.0;
+    if (buffHalf) mult *= 0.5;
+    if (shiningCellIdx === tIndex) mult *= 2.0;
+
+    const dist = getExactDamageDistribution(currentTemp, mult);
+
     let title = document.createElement("div");
     title.className = "float-title";
-    title.textContent = `▶ マス[${cellLetters[tIndex]}] の結果`;
+    title.textContent = `▶ マス[${tIndex+1}] の結果`;
     floatUI.appendChild(title);
 
     let btnGroupNorm = document.createElement("div");
     btnGroupNorm.className = "float-btn-group";
     
-    let displayDist = dist;
-    if(selectedSkill.type === "random") {
-        displayDist = getDamageDistribution(currentTemp, selectedSkill.mult);
-    }
-    
-    displayDist.forEach(dmg => {
+    dist.forEach(dmg => {
         let btn = document.createElement("button");
         btn.className = "float-btn";
         btn.textContent = dmg;
@@ -537,7 +497,7 @@ function showNextMiniPopup() {
 
     let btnGroupCrit = document.createElement("div");
     btnGroupCrit.className = "float-btn-group";
-    displayDist.forEach(dmg => {
+    dist.forEach(dmg => {
         let critDmg = dmg * 2;
         let btn = document.createElement("button");
         btn.className = "float-btn crit-val";
@@ -547,12 +507,23 @@ function showNextMiniPopup() {
     });
     floatUI.appendChild(btnGroupCrit);
 
+    // 手入力
     let manualBtn = document.createElement("button");
     manualBtn.className = "float-btn manual-btn";
     manualBtn.innerHTML = "手入力 (選択肢にない場合)";
     manualBtn.addEventListener("click", () => {
-        floatUI.classList.add("hidden");
-        openSingleInputModal(tIndex); 
+        floatUI.innerHTML = `
+            <div style="margin-bottom:10px; text-align:center;">
+                <input type="number" id="manual-val-input" style="width:80px; font-size:1.2em; text-align:center; padding:5px;">
+                <label style="color:#ffeb3b; font-weight:bold; margin-left:10px;"><input type="checkbox" id="manual-crit-check"> 会心</label>
+            </div>
+            <button id="btn-manual-enter" class="float-btn" style="width:100%">決定</button>
+        `;
+        document.getElementById("btn-manual-enter").addEventListener("click", () => {
+            let val = parseInt(document.getElementById("manual-val-input").value);
+            let isCrit = document.getElementById("manual-crit-check").checked;
+            if(!isNaN(val)) recordCellResult(val, isCrit);
+        });
     });
     floatUI.appendChild(manualBtn);
 
@@ -566,414 +537,265 @@ function showNextMiniPopup() {
     floatUI.style.left = `${x}px`;
     floatUI.style.top = `${y}px`;
     
-    document.querySelectorAll('.forge-cell').forEach(c => c.classList.remove('targeting'));
-    cell.classList.add('targeting');
+    document.querySelectorAll('.forge-cell-container').forEach(c => c.classList.remove('targeting'));
+    cell.parentElement.classList.add('targeting');
 }
 
 function recordCellResult(val, isCrit) {
     const tIndex = multiHitQueue.shift(); 
     multiHitResults.push({ target: tIndex, value: val, isCrit: isCrit });
+    if(shiningCellIdx === tIndex) shiningCellIdx = -1; // 光消費
     showNextMiniPopup(); 
 }
 
 function finalizeMultiHit() {
-    currentFocus -= selectedSkill.focus;
+    if (selectedSkill.type !== "random") currentFocus -= selectedSkill.actualCost;
     
     multiHitResults.forEach(res => {
-        const startVal = gridState[res.target].value;
+        if(res.value === 0) return; // ロック被弾
         gridState[res.target].value += res.value;
         const endVal = gridState[res.target].value;
         
         if (res.isCrit && endVal >= gridState[res.target].min && endVal <= gridState[res.target].max) {
-            const probText = calcTrueCritProb(startVal, res.value, gridState[res.target].min, gridState[res.target].max, currentTemp, selectedSkill.mult);
-            const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-            
-            const isTrueCrit = confirm(`マス[${cellLetters[res.target]}]: 会心で成功ゾーンに入りました！\n\n【AI分析: ${probText}】\n\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n・はい ＝ 本会心としてロック\n・いいえ ＝ 偽会心 (後から叩けます)`);
+            const isTrueCrit = confirm(`マス[${res.target+1}]: 会心で成功ゾーンに入りました！\n特殊な演出（ピタリと止まる音や光）が出ましたか？\n・はい ＝ 本会心としてロック\n・いいえ ＝ 偽会心`);
             if (isTrueCrit) gridState[res.target].isLocked = true;
         }
     });
     
-    currentTemp -= (selectedSkill.specialTempDrop || 50);
-    if (currentTemp < MIN_TEMP) currentTemp = MIN_TEMP;
-    
     document.getElementById("float-quick-input").classList.add("hidden");
-    updateStatusUI(); 
-    resetSelectionState();
-    calculateAI();
-}
-
-function executeTempSkill() {
-    history.push(JSON.stringify({temp: currentTemp, focus: currentFocus, grid: gridState}));
-    currentFocus -= selectedSkill.focus;
-    currentTemp += selectedSkill.tempChange;
-    if (currentTemp < MIN_TEMP) currentTemp = MIN_TEMP;
-    if (currentTemp > MAX_TEMP) currentTemp = MAX_TEMP;
+    const tempDrop = selectedSkill.temp_drop || 50;
+    currentTemp -= tempDrop;
     
-    updateStatusUI(); 
-    resetSelectionState();
-    calculateAI();
+    checkJiganeTriggersAndEnd(tempDrop);
 }
 
-function calcTrueCritProb(startVal, addedVal, minZ, maxZ, temp, mult) {
-    if (addedVal % 2 !== 0) return "100%確定 (奇数ダメージのため)";
-    const dist = getDamageDistribution(temp, mult);
-    if(dist.length === 0) return "不明";
-    const minCrit = dist[0] * 2;
-    if (startVal + minCrit > maxZ) return "100%確定 (最小乱数でも枠を超えるため)";
-    const maxCrit = dist[dist.length - 1] * 2;
-    if (startVal + addedVal === startVal + maxCrit) return "偽会心の可能性大 (最大乱数と同じ数値)";
-    return "約50% (偽会心のリスクあり)";
-}
-
-function openSingleInputModal(tIndex) {
-    const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-    document.getElementById("modal-skill-info").textContent = `マス[${cellLetters[tIndex]}] の手入力`;
-    
-    let cont = document.getElementById("numpad-inputs");
-    if(!cont) {
-        const oldInput = document.getElementById("manual-number-input");
-        cont = document.createElement("div");
-        cont.id = "numpad-inputs";
-        oldInput.parentNode.insertBefore(cont, oldInput);
-        oldInput.style.display = "none";
+// -------------------------
+// ダメージ分布計算 (DQX近似)
+// -------------------------
+function getExactDamageDistribution(temp, mult) {
+    const bMin = Math.floor(temp / 200) + 7 + (temp >= 1600 ? 1 : 0);
+    const bMax = Math.floor(temp / 100) + 8 - (temp >= 2000 ? 1 : 0);
+    let dist = [];
+    for (let i = 0; i < 7; i++) {
+        dist.push(Math.round(bMin + (bMax - bMin) * (i / 6)));
     }
-    cont.innerHTML = `
-        <div style="margin-bottom:10px;">
-            <input type="number" id="manual-val-input" style="width:100px; font-size:1.5em; text-align:center; padding:5px;">
-            <label style="color:#ffeb3b; font-weight:bold; margin-left:10px;"><input type="checkbox" id="manual-crit-check"> 会心</label>
-        </div>
-    `;
-    document.getElementById("modal-input").classList.remove("hidden");
-    const inputEl = document.getElementById("manual-val-input");
-    setTimeout(() => inputEl.focus(), 10);
-    window.currentActiveInput = inputEl;
+    return [...new Set(dist.map(v => Math.floor(v * mult)))].sort((a,b)=>a-b);
 }
 
-document.getElementById("btn-cancel-input").addEventListener("click", () => {
-    document.getElementById("modal-input").classList.add("hidden");
-    showNextMiniPopup(); 
-});
-
-document.querySelectorAll(".num-key").forEach(key => {
-    key.addEventListener("click", (e) => {
-        abortAICalculation(); 
-        
-        const input = window.currentActiveInput;
-        if (!input) return;
-        if (e.target.classList.contains("clear")) input.value = "";
-        else if (e.target.classList.contains("enter")) {
-            let val = parseInt(input.value);
-            if (isNaN(val)) { alert("数値を入力してください"); return; }
-            let isCrit = document.getElementById("manual-crit-check").checked;
-            document.getElementById("modal-input").classList.add("hidden");
-            recordCellResult(val, isCrit);
-        }
-        else input.value += e.target.textContent;
-    });
-});
-
-document.getElementById("btn-undo").addEventListener("click", () => {
-    abortAICalculation(); 
+// -------------------------
+// 地金トリガー判定と終了判定
+// -------------------------
+function checkJiganeTriggersAndEnd(tempDrop) {
+    turnCount++;
+    buffDouble = false; buffHalf = false; buffFocusHalf = false; buffFocusCrit = false;
     
-    if (history.length === 0) return;
-    const lastState = JSON.parse(history.pop());
-    currentTemp = lastState.temp; currentFocus = lastState.focus; gridState = lastState.grid;
-    updateStatusUI(); 
-    resetSelectionState(); 
+    if (currentTemp <= 0) {
+        executeFinish();
+        return;
+    }
+    
+    // 一気に通り越した場合は発動しない仕様
+    if (currentTemp % 200 === 0 && tempDrop > 0) {
+        const j = currentRecipe.jiganeType;
+        if (j === "戻り") {
+            let valid = gridState.map((s, i) => ({s, i})).filter(x => x.s.value > 0 && !(x.s.min <= x.s.value && x.s.value <= x.s.max));
+            if (valid.length > 0) {
+                // はみ出ている場所優先
+                let over = valid.filter(x => x.s.value > x.s.max);
+                let targets = over.length > 0 ? over : valid;
+                let maxVal = Math.max(...targets.map(x => x.s.value));
+                let candidates = targets.filter(x => x.s.value === maxVal);
+                let target = candidates[Math.floor(Math.random() * candidates.length)];
+                let ret = Math.floor(Math.random() * 5) + 12; // 12~16
+                alert(`【戻り地金 発動】マス[${target.i+1}] が ${ret} 戻りました！`);
+                gridState[target.i].value = Math.max(0, gridState[target.i].value - ret);
+            }
+        } else if (j === "倍半") {
+            if (currentTemp % 400 === 0) buffDouble = true;
+            else buffHalf = true;
+        } else if (j === "集中変化") {
+            if (currentTemp % 400 === 0) buffFocusCrit = true;
+            else buffFocusHalf = true;
+        } else if (j === "光") {
+            let valid = gridState.map((s, i) => ({s, i})).filter(x => x.s.value < x.s.min);
+            if (valid.length > 0) {
+                shiningCellIdx = valid[Math.floor(Math.random() * valid.length)].i;
+            }
+        }
+    }
+    
+    resetSelectionState();
+    updateStatusUI();
     calculateAI();
-});
+}
 
-// ==========================================
-// キャンセル機構付き 概算・超高速AI
-// ==========================================
+function executeFinish() {
+    let errorSum = 0;
+    gridState.forEach(s => {
+        let center = (s.min + s.max) / 2.0;
+        if (s.min <= s.value && s.value <= s.max) errorSum += 4;
+        else errorSum += Math.abs(s.value - center);
+    });
+    
+    const th = THRESHOLDS[currentRecipe.category];
+    let result = "失敗";
+    if (errorSum <= th.s3) result = "大成功 (星3) 🌟🌟🌟";
+    else if (errorSum <= th.s2) result = "成功 (星2) 🌟🌟";
+    else if (errorSum <= th.s1) result = "成功 (星1) 🌟";
+    
+    alert(`鍛冶終了！結果: ${result}\n(合計誤差スコア: ${errorSum.toFixed(1)})`);
+    resetSelectionState();
+}
+
+// -------------------------
+// 高速概算AI (Ver 12.0)
+// -------------------------
 async function calculateAI() {
     currentAiCalcId++;
     const myCalcId = currentAiCalcId;
     lastYieldTime = Date.now();
 
     const aiBox = document.getElementById("ai-suggestion");
-    aiBox.textContent = "AI思考中... (高速概算で数手先を予測中 ⚡)";
+    aiBox.textContent = "AI思考中... ⚡";
     aiSuggestedMove = null;
-
     await new Promise(resolve => setTimeout(resolve, 10)); 
     
-    const SEARCH_DEPTH = 4;
-    // プレコンピュートで決定した最適温度を使用！
-    const optimalTemp = aiStrategy.optimalTemp;
-
-    let legalMoves = getLegalMoves(gridState, currentTemp, currentFocus, optimalTemp, currentRecipe);
+    // AI目標温度の設定
+    let maxShortfall = 0;
+    gridState.forEach(s => {
+        if (s.value < s.min) maxShortfall = Math.max(maxShortfall, s.min - s.value);
+    });
+    let optimalTemp = currentRecipe.jiganeType === "光" ? 2000 : (maxShortfall > 220 ? 1600 : (maxShortfall > 90 ? 1300 : 1000));
     
+    let isCooling = false;
+    if (history.length > 0) {
+        let maxTempInHistory = Math.max(...history.map(h => JSON.parse(h).temp), currentTemp);
+        if (maxTempInHistory - currentTemp >= 100) isCooling = true;
+    }
+
+    // 全合法手の生成（グリッド指定を全て展開）
+    let legalMoves = [];
+    const layout = EQUIP_LAYOUTS[currentRecipe.category];
+    
+    let allInZone = true, hasUnlocked = false;
+    gridState.forEach(s => {
+        if (!s.isLocked) {
+            hasUnlocked = true;
+            if (s.value < s.min || s.value > s.max) allInZone = false;
+        }
+    });
+    if (hasUnlocked && allInZone) legalMoves.push({ skill: SKILLS.find(s=>s.type==="finish"), ox: 0, oy: 0, cells: [] });
+    
+    SKILLS.forEach(skill => {
+        if (skill.type === "finish" || playerLevel < skill.req_lv) return;
+        if (skill.name === "火力上げ" && (currentTemp >= optimalTemp || isCooling)) return;
+        if (skill.name === "冷やし込み" && currentTemp <= 1000) return;
+        
+        let cost = skill.cost;
+        if (buffFocusHalf) cost = Math.max(1, Math.floor(cost / 2));
+        else if (buffFocusCrit && skill.type !== "finish") cost = Math.floor(cost * 1.5);
+        if (currentFocus < cost) return;
+
+        if (skill.type === "temp" || skill.type === "random") {
+            legalMoves.push({ skill, ox: 0, oy: 0, cells: [] });
+        } else {
+            for (let y = 0; y < layout.h; y++) {
+                for (let x = 0; x < layout.w; x++) {
+                    const coords = getHitCoords(skill.name, x, y, layout);
+                    const hitCells = getHitCellsFromCoords(coords, layout);
+                    if (hitCells && hitCells.length > 0) {
+                        legalMoves.push({ skill, ox: x, oy: y, cells: hitCells });
+                    }
+                }
+            }
+        }
+    });
+
     let bestMove = null;
     let bestScore = -Infinity;
 
     try {
         for (let move of legalMoves) {
             if (currentAiCalcId !== myCalcId) return; 
-            
-            let score = await evaluateMoveApproxAsync(move, gridState, currentTemp, currentFocus, optimalTemp, SEARCH_DEPTH, myCalcId, true);
-            
-            if (score > bestScore) {
-                bestScore = score;
-                bestMove = move;
-            }
+            let score = await evalMoveApprox(move, gridState, currentTemp, currentFocus, optimalTemp, 4, myCalcId);
+            if (score > bestScore) { bestScore = score; bestMove = move; }
         }
     } catch (e) {
-        if (e.message === "AI_CANCELLED") return; 
-        throw e;
+        if (e.message === "AI_CANCELLED") return; throw e;
     }
 
     if (currentAiCalcId !== myCalcId) return; 
 
     if (bestMove && bestMove.skill) {
         aiSuggestedMove = bestMove;
+        let targetText = bestMove.cells.length > 0 ? `(マス ${bestMove.cells.map(i=>i+1).join(",")})` : "";
+        if(bestMove.skill.type === "temp" || bestMove.skill.type === "random") targetText = "(全体)";
         
-        if (bestMove.skill.type === "finish") {
-            aiBox.innerHTML = `
-                <div style="font-size:1.1em; margin-bottom:5px; color:#4CAF50;">💡 <strong>しあげる (完成にする)</strong></div>
-                <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
-                【AI方針】 今が最高の状態です。数手先まで読んでもこれ以上叩くとはみ出すリスクが高いです。<br>
-                </div>
-            `;
-        } else {
-            const cellLetters = ["A", "B", "C", "D", "E", "F", "G", "H"];
-            let targetText = "全体";
-            if (bestMove.targets && bestMove.targets.length > 0) {
-                targetText = bestMove.targets.map(t => `[${cellLetters[t]}]`).join("");
-            }
-            aiBox.innerHTML = `
-                <div style="font-size:1.1em; margin-bottom:5px;">💡 <strong>${bestMove.skill.name}</strong> を <strong>${targetText}</strong> に使用</div>
-                <div style="font-size:0.85em; color:#ccc; line-height:1.4;">
-                【AI方針】 最適目標温度: ${optimalTemp}℃ に向かって進行中 <br>
-                </div>
-            `;
-            renderGrid(); 
-        }
+        aiBox.innerHTML = `
+            <div style="font-size:1.1em; font-weight:bold; color:#00bcd4; margin-bottom:5px;">
+                💡 おすすめ手: ${bestMove.skill.name} ${targetText}
+            </div>
+            <div style="font-size:0.85em; color:#ddd; line-height:1.4; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px;">
+                <strong>【AI方針】</strong> 予測期待値が最も高い行動です。<br>
+                ※AIは誤差合計（星3判定）を最小化するよう計算しています。
+            </div>
+        `;
+        renderGrid(); 
     } else {
         aiBox.innerHTML = `おすすめの手が見つかりません。`;
     }
 }
 
-async function yieldIfNeeded(myCalcId) {
+async function evalMoveApprox(move, state, temp, focus, optTemp, depth, myCalcId) {
+    if (Date.now() - lastYieldTime > 16) { await new Promise(r => setTimeout(r, 0)); lastYieldTime = Date.now(); }
     if (currentAiCalcId !== myCalcId) throw new Error("AI_CANCELLED");
-    if (Date.now() - lastYieldTime > 16) {
-        await new Promise(r => setTimeout(r, 0));
-        lastYieldTime = Date.now();
-        if (currentAiCalcId !== myCalcId) throw new Error("AI_CANCELLED");
-    }
-}
 
-function cloneState(state) {
-    return state.map(s => ({ value: s.value, min: s.min, max: s.max, isLocked: s.isLocked }));
-}
+    let cost = move.skill.cost;
+    if (buffFocusHalf) cost = Math.max(1, Math.floor(cost / 2));
+    else if (buffFocusCrit && move.skill.type !== "finish") cost = Math.floor(cost * 1.5);
 
-function getLegalMoves(state, temp, focus, optimalTemp, recipe, overrideLevel = null) {
-    let moves = [];
-    let level = overrideLevel || parseInt(document.getElementById("artisan-level").value) || 80;
+    let nextFocus = focus - cost;
+    if (move.skill.type === 'finish') return evalState(state, temp, nextFocus, optTemp);
+    if (move.skill.type === 'temp') return evalState(state, temp + move.skill.temp_change, nextFocus, optTemp) - 500;
     
-    let hasUnlocked = false;
-    let allInZone = true;
-    state.forEach(s => {
-        if (!s.isLocked) {
-            hasUnlocked = true;
-            if (s.value < s.min || s.value > s.max) allInZone = false;
-        }
-    });
-    
-    if (hasUnlocked && allInZone) {
-        moves.push({ skill: SKILLS.find(s => s.type === 'finish'), targets: [] });
-    }
-
-    let isAlreadyCoolingDown = false;
-    if (history.length > 0) {
-        let maxTempInHistory = Math.max(...history.map(h => JSON.parse(h).temp), currentTemp);
-        if (maxTempInHistory - temp >= 100) isAlreadyCoolingDown = true;
-    }
-
-    SKILLS.forEach(skill => {
-        if (skill.type === 'finish') return;
-        if (level < skill.reqLevel || focus < skill.focus) return;
-        
-        if (skill.name === "火力上げ" && (temp >= optimalTemp || isAlreadyCoolingDown)) return;
-        if (skill.name === "冷やし込み" && temp <= 1000) return; 
-        
-        let startIndices = [0];
-        if (skill.type !== "temp" && skill.type !== "random") {
-            startIndices = [];
-            state.forEach((s, i) => { if (!s.isLocked && s.value < s.max) startIndices.push(i); });
-        }
-        
-        startIndices.forEach(idx => {
-            let targets = skill.type === "temp" ? [] : getMultiHitTargets(skill.name, idx, state);
-            if (skill.type !== "temp" && targets.length === 0) return;
-            moves.push({ skill, targets });
-        });
-    });
-    return moves;
-}
-
-function evaluateStateScore(state, temp, focus, optimalTemp) {
-    let score = 0;
-    let isAllDone = true;
-    
-    for (let i = 0; i < state.length; i++) {
-        let s = state[i];
-        if (s.isLocked) {
-            score += 100000; 
-        } else if (s.value > s.max) {
-            score -= 30000; 
-            isAllDone = false;
-        } else if (s.value >= s.min && s.value <= s.max) {
-            score += 30000; 
-            const center = (s.min + s.max) / 2;
-            score -= Math.abs(s.value - center) * 10;
-        } else {
-            isAllDone = false;
-            let shortfall = s.min - s.value;
-            score -= shortfall * 50;
-            if (s.value + 30 > s.max) score -= 1500; 
-        }
-    }
-
-    if (isAllDone) score += 500000; 
-    score -= Math.abs(temp - optimalTemp) * 15;
-    score += focus * 150; 
-    return score;
-}
-
-async function evaluateMoveApproxAsync(move, state, temp, focus, optimalTemp, depth, myCalcId, isExactNode) {
-    await yieldIfNeeded(myCalcId);
-
-    let nextFocus = focus - move.skill.focus;
-    if (nextFocus < 0) return -999999; 
-    
-    if (move.skill.type === 'finish') {
-        return evaluateStateScore(state, temp, nextFocus, optimalTemp);
-    }
-    
-    if (move.skill.type === 'temp') {
-        let nextTemp = Math.min(MAX_TEMP, Math.max(MIN_TEMP, temp + move.skill.tempChange));
-        let finalScore = 0;
-        if (depth > 1) {
-            let nextMoves = getLegalMoves(state, nextTemp, nextFocus, optimalTemp, currentRecipe);
-            if (nextMoves.length > 0) {
-                let bestSub = -Infinity;
-                for (let nMove of nextMoves) {
-                    let subScore = await evaluateMoveApproxAsync(nMove, state, nextTemp, nextFocus, optimalTemp, depth - 1, myCalcId, false);
-                    if (subScore > bestSub) bestSub = subScore;
-                }
-                finalScore = bestSub;
-            } else {
-                finalScore = evaluateStateScore(state, nextTemp, nextFocus, optimalTemp);
-            }
-        } else {
-            finalScore = evaluateStateScore(state, nextTemp, nextFocus, optimalTemp);
-        }
-        return finalScore - 500; 
-    }
-    
-    let tempDrop = move.skill.specialTempDrop || 50;
-    let nextTemp = Math.max(MIN_TEMP, temp - tempDrop);
-    
-    if (move.skill.type === 'random') {
-        let dist = getDamageDistribution(temp, move.skill.mult);
-        if (dist.length === 0) return -999999;
-        
-        let avgDmg = (dist[0] + dist[dist.length - 1]) / 2;
-        let critRate = (document.getElementById("has-kotsu").checked ? 0.02 : 0.01) + 0.046;
-        let expectedDmg = avgDmg * (1 + critRate);
-        
-        let nextStateApprox = cloneState(state);
-        let hitPerCell = 4 / state.length;
-        
-        nextStateApprox.forEach((s, i) => {
-            if (!s.isLocked) s.value += (expectedDmg * hitPerCell);
-        });
-        
-        if (depth > 1) {
-            let nextMoves = getLegalMoves(nextStateApprox, nextTemp, nextFocus, optimalTemp, currentRecipe);
-            if (nextMoves.length > 0) {
-                let bestSub = -Infinity;
-                for (let nMove of nextMoves) {
-                    let subScore = await evaluateMoveApproxAsync(nMove, nextStateApprox, nextTemp, nextFocus, optimalTemp, depth - 1, myCalcId, false);
-                    if (subScore > bestSub) bestSub = subScore;
-                }
-                return bestSub;
-            }
-        }
-        return evaluateStateScore(nextStateApprox, nextTemp, nextFocus, optimalTemp);
-    }
-    
-    let dist = getDamageDistribution(temp, move.skill.mult);
+    let dist = getExactDamageDistribution(temp, move.skill.mult);
     if (dist.length === 0) return -999999;
     
     let avgDmg = (dist[0] + dist[dist.length - 1]) / 2;
-    let critRate = (document.getElementById("has-kotsu").checked ? 0.02 : 0.01) + 0.046;
-    if (move.skill.isCritUp) critRate += (0.046 * 6);
+    let critRate = 0.062;
+    if (move.skill.crit_up) critRate += 0.372;
+    if (buffFocusCrit) critRate += 0.310;
+    let expectedDmg = avgDmg * (1 + critRate);
     
-    if (isExactNode) {
-        let stateNorm = cloneState(state);
-        move.targets.forEach(t => { if (!stateNorm[t].isLocked) stateNorm[t].value += avgDmg; });
-        
-        let stateCrit = cloneState(state);
-        move.targets.forEach(t => {
-            if (!stateCrit[t].isLocked) {
-                let val = stateCrit[t].value + (avgDmg * 2);
-                let center = (stateCrit[t].min + stateCrit[t].max) / 2;
-                if (val >= stateCrit[t].min && val <= stateCrit[t].max + (avgDmg*2)) { 
-                    stateCrit[t].isLocked = true;
-                    stateCrit[t].value = Math.min(val, center);
-                } else {
-                    stateCrit[t].value = val;
-                }
-            }
-        });
-        
-        let scoreNorm = 0, scoreCrit = 0;
-        
-        if (depth > 1) {
-            let movesNorm = getLegalMoves(stateNorm, nextTemp, nextFocus, optimalTemp, currentRecipe);
-            if (movesNorm.length > 0) {
-                let bestSub = -Infinity;
-                for (let nMove of movesNorm) {
-                    let subScore = await evaluateMoveApproxAsync(nMove, stateNorm, nextTemp, nextFocus, optimalTemp, depth - 1, myCalcId, false);
-                    if (subScore > bestSub) bestSub = subScore;
-                }
-                scoreNorm = bestSub;
-            } else { scoreNorm = evaluateStateScore(stateNorm, nextTemp, nextFocus, optimalTemp); }
-            
-            let movesCrit = getLegalMoves(stateCrit, nextTemp, nextFocus, optimalTemp, currentRecipe);
-            if (movesCrit.length > 0) {
-                let bestSub = -Infinity;
-                for (let nMove of movesCrit) {
-                    let subScore = await evaluateMoveApproxAsync(nMove, stateCrit, nextTemp, nextFocus, optimalTemp, depth - 1, myCalcId, false);
-                    if (subScore > bestSub) bestSub = subScore;
-                }
-                scoreCrit = bestSub;
-            } else { scoreCrit = evaluateStateScore(stateCrit, nextTemp, nextFocus, optimalTemp); }
-        } else {
-            scoreNorm = evaluateStateScore(stateNorm, nextTemp, nextFocus, optimalTemp);
-            scoreCrit = evaluateStateScore(stateCrit, nextTemp, nextFocus, optimalTemp);
-        }
-        return (scoreNorm * (1 - critRate)) + (scoreCrit * critRate);
+    let nextState = state.map(s => ({ value: s.value, min: s.min, max: s.max, isLocked: s.isLocked }));
+    
+    if (move.skill.type === 'random') {
+        let hitPerCell = 4 / state.length;
+        nextState.forEach((s, i) => { if (!s.isLocked) s.value += (expectedDmg * hitPerCell); });
     } else {
-        let expectedDmg = avgDmg * (1 + critRate);
-        let nextStateApprox = cloneState(state);
-        
-        move.targets.forEach(t => {
-            if (!nextStateApprox[t].isLocked) nextStateApprox[t].value += expectedDmg;
-        });
-        
-        if (depth > 1) {
-            let nextMoves = getLegalMoves(nextStateApprox, nextTemp, nextFocus, optimalTemp, currentRecipe);
-            if (nextMoves.length > 0) {
-                let bestSub = -Infinity;
-                for (let nMove of nextMoves) {
-                    let subScore = await evaluateMoveApproxAsync(nMove, nextStateApprox, nextTemp, nextFocus, optimalTemp, depth - 1, myCalcId, false);
-                    if (subScore > bestSub) bestSub = subScore;
-                }
-                return bestSub;
+        move.cells.forEach(idx => {
+            if (!nextState[idx].isLocked) {
+                let m = expectedDmg;
+                if (buffDouble) m *= 2;
+                if (buffHalf) m *= 0.5;
+                if (shiningCellIdx === idx) m *= 2.0;
+                nextState[idx].value += m;
             }
-        }
-        return evaluateStateScore(nextStateApprox, nextTemp, nextFocus, optimalTemp);
+        });
     }
+    
+    return evalState(nextState, Math.max(0, temp - (move.skill.temp_drop || 50)), nextFocus, optTemp);
+}
+
+function evalState(state, temp, focus, optTemp) {
+    let score = 0, allDone = true;
+    state.forEach(s => {
+        let center = (s.min + s.max) / 2.0;
+        if (s.isLocked) score += 100000;
+        else if (s.value > s.max) { score -= 30000; allDone = false; }
+        else if (s.min <= s.value && s.value <= s.max) { score += 30000 - Math.abs(s.value - center)*10; }
+        else { allDone = false; score -= (s.min - s.value)*50; if (s.value+30 > s.max) score -= 1500; }
+    });
+    if (allDone) score += 500000;
+    return score - Math.abs(temp - optTemp)*15 + focus*150;
 }
