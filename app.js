@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - Ver 12.8 (UI描画データ完全内蔵 ＆ ONNXテスト版)
+// app.js - Ver 12.9 (インポートボタン強制表示・完全内蔵版)
 // ==========================================
-const UPDATE_VERSION = "Ver 12.8 (データ完全内蔵版)";
+const UPDATE_VERSION = "Ver 12.9 (インポート強制表示版)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -26,7 +26,7 @@ style.innerHTML = `
 .shining-cell { box-shadow: 0 0 20px #ffeb3b inset; border-color: #ffeb3b; }
 #jigane-buff-display { text-align: center; font-weight: bold; color: #ffeb3b; margin: 10px; min-height: 24px; font-size: 1.1em; }
 .skill-btn.finish-btn { background: #4CAF50; border-color: #388E3C; font-weight: bold; width: 100%; margin-top: 10px; }
-.import-box { background: #2a2a2a; border: 2px dashed #e09f3e; padding: 12px; border-radius: 6px; margin: 15px 0; text-align: center; }
+.import-box { background: #2a2a2a; border: 2px dashed #e09f3e; padding: 15px; border-radius: 6px; margin: 20px auto; text-align: center; max-width: 400px; }
 `;
 document.head.appendChild(style);
 
@@ -102,6 +102,8 @@ async function initAiModel() {
         if(aiBox) aiBox.innerHTML = "<div style='color:#4CAF50;'>🤖 ONNXモデルスタンバイ完了！</div>";
     } catch (e) {
         console.error(e);
+        const aiBox = document.getElementById("ai-suggestion");
+        if(aiBox) aiBox.innerHTML = "<div style='color:red;'>🤖 モデル読込失敗(ONNXファイルがルートに見つかりません)</div>";
     }
 }
 
@@ -117,7 +119,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if(!document.getElementById("jigane-buff-display")) {
         const buffDiv = document.createElement("div");
         buffDiv.id = "jigane-buff-display";
-        document.querySelector(".action-panel").prepend(buffDiv);
+        const actionPanel = document.querySelector(".action-panel");
+        if(actionPanel) actionPanel.prepend(buffDiv);
     }
 
     setupImportUI();
@@ -126,9 +129,21 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function setupImportUI() {
-    const recipeSection = document.getElementById("recipe-list");
-    if (!recipeSection) return;
+    // もし既存のリスト枠が無ければ、強制的に作成する
+    let recipeSection = document.getElementById("recipe-list");
+    if (!recipeSection) {
+        recipeSection = document.createElement("ul");
+        recipeSection.id = "recipe-list";
+        recipeSection.style.listStyle = "none";
+        recipeSection.style.padding = "0";
+        // 画面の上部（タイトルの下あたり）に強制配置
+        const sceneSelect = document.getElementById("scene-select") || document.body;
+        sceneSelect.appendChild(recipeSection);
+    }
     
+    // 既にインポートボタンがあれば作らない
+    if (document.querySelector(".import-box")) return;
+
     const importBox = document.createElement("div");
     importBox.className = "import-box";
     importBox.innerHTML = `
@@ -138,6 +153,7 @@ function setupImportUI() {
         </label>
         <div style="font-size: 0.8em; color: #aaa; margin-top: 5px;">作成したレシピを選択してください</div>
     `;
+    
     recipeSection.parentNode.insertBefore(importBox, recipeSection);
 
     document.getElementById("json-file-input").addEventListener("change", (e) => {
@@ -149,6 +165,7 @@ function setupImportUI() {
                 const importedData = JSON.parse(event.target.result);
                 window.RECIPES = Array.isArray(importedData) ? importedData : [importedData];
                 renderRecipeList();
+                alert("読み込み成功！下にレシピが表示されます。");
             } catch (err) { alert("JSONの読み込みに失敗しました: " + err.message); }
         };
         reader.readAsText(file);
@@ -156,7 +173,7 @@ function setupImportUI() {
 }
 
 function renderRecipeList() {
-    const listElement = document.getElementById("recipe-list");
+    let listElement = document.getElementById("recipe-list");
     if (!listElement) return;
     listElement.innerHTML = ""; 
     
@@ -180,8 +197,10 @@ function renderRecipeList() {
 
 function startSmithing(recipe) {
     currentRecipe = recipe;
-    document.getElementById("current-recipe-name").textContent = recipe.name;
-    document.getElementById("display-jigane").textContent = `地金: ${recipe.jiganeType || recipe.jigane}`;
+    const nameEl = document.getElementById("current-recipe-name");
+    if(nameEl) nameEl.textContent = recipe.name;
+    const jiganeEl = document.getElementById("display-jigane");
+    if(jiganeEl) jiganeEl.textContent = `地金: ${recipe.jiganeType || recipe.jigane}`;
     
     playerLevel = 80;
     maxFocus = FOCUS_BY_LEVEL[playerLevel] + 45; 
@@ -202,15 +221,21 @@ function startSmithing(recipe) {
     renderGrid();
     setupSkills();
     
-    document.getElementById("scene-select").classList.remove("active");
-    document.getElementById("scene-smithing").classList.add("active");
+    const sceneSelect = document.getElementById("scene-select");
+    const sceneSmithing = document.getElementById("scene-smithing");
+    if(sceneSelect) sceneSelect.classList.remove("active");
+    if(sceneSmithing) sceneSmithing.classList.add("active");
+    
     calculateAI();
 }
 
 function updateStatusUI() {
-    document.getElementById("current-temp").textContent = currentTemp;
-    document.getElementById("current-focus").textContent = currentFocus;
-    document.getElementById("max-focus").textContent = maxFocus;
+    const tEl = document.getElementById("current-temp");
+    const fEl = document.getElementById("current-focus");
+    const mEl = document.getElementById("max-focus");
+    if(tEl) tEl.textContent = currentTemp;
+    if(fEl) fEl.textContent = currentFocus;
+    if(mEl) mEl.textContent = maxFocus;
 }
 
 function renderGrid() {
@@ -480,8 +505,7 @@ async function calculateAI() {
     const vals = [], mins = [], maxs = [];
     for (let i = 0; i < 8; i++) {
         if (i < currentRecipe.targets.length) {
-            // ⚠️ 質問：Python側で学習した際、これらの数値をどうやって正規化（割り算など）していましたか？
-            // 現在は生の数値（例: 1000など）を直接AIに渡しています。
+            // ★ もしPythonでの学習時に数値を割って（正規化して）いた場合は、ここで同じように割る必要があります。
             vals.push(gridState[i] ? gridState[i].value : 0);
             mins.push(currentRecipe.targets[i].min);
             maxs.push(currentRecipe.targets[i].max);
