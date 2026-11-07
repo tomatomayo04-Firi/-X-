@@ -3,131 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ドラクエ10 防具鍛冶シミュレーター</title>
-    <link rel="stylesheet" href="style.css">
+    <title>防具鍛冶ツール</title>
+    <!-- ONNX Runtime Web (AIの頭脳) の読み込み -->
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body { background: #1a1a1a; color: white; font-family: sans-serif; margin: 0; padding: 20px; }
+        .action-panel { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        #scene-select, #scene-smithing { display: none; }
+        #scene-select.active, #scene-smithing.active { display: block; }
+        h1 { color: #e09f3e; font-size: 1.5rem; text-align: center; }
+        .status-bar { display: flex; justify-content: space-around; background: #333; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 1.2rem; }
+        #skill-list { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+        .skill-btn { background: #444; color: white; border: 1px solid #555; padding: 12px; border-radius: 5px; cursor: pointer; flex: 1 1 30%; min-width: 100px; font-size: 1rem; }
+    </style>
 </head>
 <body>
-    <div id="app">
-        <!-- ▼▼ レシピ選択画面 ▼▼ -->
-        <div id="scene-select" class="scene active">
-            <h1>防具鍛冶 練習＆最適手ツール</h1>
-            
-            <div class="settings-panel">
-                <label>職人レベル: <input type="number" id="artisan-level" value="80" min="1" max="80"></label>
-                <label><input type="checkbox" id="has-kotsu" checked> コツを掴んでいる (会心+1%)</label>
-                <label>ハンマー: 
-                    <select id="hammer-type">
-                        <option value="光3">光の鍛冶ハンマー★3 (集中+45 / 会心+4.6%)</option>
-                        <!-- 必要に応じて追加 -->
-                    </select>
-                </label>
-            </div>
+    <h1>防具鍛冶ツール</h1>
 
-            <div class="filter-panel">
-                <label>部位: 
-                    <select id="filter-type">
-                        <option value="all">すべて</option>
-                        <option value="アタマ">アタマ</option>
-                        <option value="からだ上">からだ上</option>
-                        <option value="からだ下">からだ下</option>
-                        <option value="ウデ">ウデ</option>
-                        <option value="足">足</option>
-                        <option value="小盾">小盾</option>
-                        <option value="大盾">大盾</option>
-                    </select>
-                </label>
-                <label>地金特性: 
-                    <select id="filter-jigane">
-                        <option value="all">すべて</option>
-                        <option value="通常地金">通常</option>
-                        <option value="戻り地金">戻り</option>
-                        <option value="倍半地金">倍半</option>
-                        <option value="集中変化地金">集中変化</option>
-                        <option value="光地金">光</option>
-                    </select>
-                </label>
-                <label><input type="checkbox" id="filter-crystal"> 人気結晶装備</label>
-                <button id="btn-load-recipes">レシピデータを再読み込み</button>
-            </div>
-
-            <div class="recipe-list-container">
-                <ul id="recipe-list">
-                    <!-- JavaScriptで読み込んだレシピがここに入ります -->
-                    <li class="loading">レシピデータを読み込み中...</li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- ▼▼ 鍛冶画面 ▼▼ -->
-        <div id="scene-smithing" class="scene">
-            <div class="header-status">
-                <button id="btn-back">◀ レシピ選択へ戻る</button>
-                <h2 id="current-recipe-name">アイテム名</h2>
-                <div class="status-bar">
-                    <span class="jigane-type" id="display-jigane">地金タイプ</span>
-                    <span>温度: <strong id="current-temp">1000</strong>℃</span>
-                    <span>集中力: <strong id="current-focus">200</strong> / <span id="max-focus">200</span></span>
-                </div>
-            </div>
-
-            <div class="main-smithing-area">
-                <!-- マス目表示エリア -->
-                <div class="grid-container" id="smithing-grid">
-                    <!-- JSで部位に応じたマス(A~H)を生成 -->
-                </div>
-
-                <!-- おすすめ手ナビゲーション -->
-                <div class="recommendation-panel">
-                    <h3>💡 AIおすすめの次の一手</h3>
-                    <div id="ai-suggestion" class="suggestion-box">計算中...</div>
-                    <button id="btn-auto-execute" class="btn-primary">おすすめを実行 (数値選択へ)</button>
-                </div>
-            </div>
-
-            <!-- スキル選択・入力エリア -->
-            <div class="action-panel">
-                <div class="skill-list" id="skill-list">
-                    <!-- JSでレベルに応じたスキルボタンを生成 -->
-                </div>
-                
-                <div class="special-actions">
-                    <button id="btn-hissatsu" class="btn-hissatsu" disabled>ひっさつ (へパイトスの炎)</button>
-                    <button id="btn-focus-recover" class="btn-recover" disabled>まれに集中回復 (+30)</button>
-                    <button id="btn-undo" class="btn-undo">1手戻す</button>
-                </div>
-            </div>
+    <!-- レシピ選択画面 -->
+    <div id="scene-select" class="active">
+        <div class="action-panel">
+            <ul id="recipe-list" style="list-style:none; padding:0; margin:0;">
+                <!-- ここにインポートボタンとレシピリストが表示されます -->
+            </ul>
         </div>
     </div>
 
-    <!-- 数値入力用ポップアップ (ミニキーパッド) -->
-    <div id="modal-input" class="modal hidden">
-        <div class="modal-content">
-            <h3>実際に出た数値を入力</h3>
-            <p id="modal-skill-info">使用スキル: たたく</p>
-            <div class="quick-select" id="quick-select-numbers">
-                <!-- JSで出うる数値の候補ボタンを生成 -->
-            </div>
+    <!-- 鍛冶シミュレーション画面 -->
+    <div id="scene-smithing">
+        <div class="action-panel">
+            <h2 id="current-recipe-name" style="text-align:center; color:#4CAF50; margin-top:0;"></h2>
+            <div id="display-jigane" style="text-align:center; color:#aaa; margin-bottom:10px;"></div>
             
-            <div class="toggle-critical">
-                <label><input type="checkbox" id="check-critical"> 会心が出た！</label>
+            <div class="status-bar">
+                <div>温度: <span id="current-temp" style="color:#ffeb3b; font-weight:bold;">1000</span></div>
+                <div>集中力: <span id="current-focus" style="color:#00bcd4; font-weight:bold;"></span> / <span id="max-focus"></span></div>
             </div>
 
-            <h4>手動入力</h4>
-            <div class="numpad">
-                <input type="number" id="manual-number-input" readonly>
-                <div class="numpad-keys">
-                    <button class="num-key">7</button><button class="num-key">8</button><button class="num-key">9</button>
-                    <button class="num-key">4</button><button class="num-key">5</button><button class="num-key">6</button>
-                    <button class="num-key">1</button><button class="num-key">2</button><button class="num-key">3</button>
-                    <button class="num-key clear">C</button><button class="num-key">0</button><button class="num-key enter" id="btn-submit-number">決定</button>
-                </div>
+            <!-- AIサジェスト表示エリア -->
+            <div id="ai-suggestion" style="background:#2a2a2a; border-left:4px solid #00bcd4; padding:10px; margin-bottom:15px;">
+                🤖 AIモデルスタンバイ待機中...
             </div>
-            <button id="btn-cancel-input" class="btn-cancel">キャンセル</button>
+
+            <!-- 鍛冶グリッド（マス目） -->
+            <div id="smithing-grid"></div>
+
+            <!-- スキルボタン一覧 -->
+            <div id="skill-list" style="margin-top:20px;"></div>
+            
+            <!-- リセットボタン -->
+            <button onclick="location.reload()" style="width:100%; margin-top:25px; padding:15px; background:#d32f2f; color:white; border:none; border-radius:5px; font-weight:bold; font-size:1.1rem; cursor:pointer;">最初からやり直す</button>
         </div>
     </div>
 
-    <script src="data.js"></script>
+    <!-- アプリ本体の読み込み (古い data.js は読み込まない) -->
     <script src="app.js"></script>
 </body>
 </html>
