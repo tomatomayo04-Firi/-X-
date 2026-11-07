@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - Ver 12.7 (レシピ端末読み込み対応・ONNXテスト版)
+// app.js - Ver 12.8 (UI描画データ完全内蔵 ＆ ONNXテスト版)
 // ==========================================
-const UPDATE_VERSION = "Ver 12.7 (レシピ端末読み込み対応・ONNX版)";
+const UPDATE_VERSION = "Ver 12.8 (データ完全内蔵版)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -14,7 +14,6 @@ style.innerHTML = `
 .float-btn:hover { background: #e09f3e; color: black; }
 .float-btn.crit-val { border-color: #aa9900; color: #ffeb3b; background: #333; font-weight: bold; }
 .float-btn.crit-val:hover { background: #ffeb3b; color: black; }
-
 #smithing-grid { display: grid; gap: 4px; justify-content: center; margin: 20px auto; padding: 10px; background: #222; border-radius: 8px; width: fit-content; }
 .forge-cell-container { width: 60px; height: 180px; position: relative; }
 .forge-cell-container.blank { background: rgba(255,255,255,0.05); border: 1px dashed #444; cursor: pointer; }
@@ -31,11 +30,45 @@ style.innerHTML = `
 `;
 document.head.appendChild(style);
 
-// ※ FOCUS_BY_LEVEL, EQUIP_LAYOUTS, SKILLS は data.js にあるためここでは宣言しません。
-if (typeof window.RECIPES === "undefined") {
-    window.RECIPES = []; // レシピが読み込めなかった場合の初期化
-}
+// ==========================================
+// 必須マスターデータ (完全に内蔵)
+// ==========================================
+const FOCUS_BY_LEVEL = { 75: 197, 76: 199, 77: 201, 78: 203, 79: 205, 80: 207 };
 
+const EQUIP_LAYOUTS = {
+    "アタマ":   { w: 2, h: 2, map: [1,1, 1,1] },
+    "小盾":     { w: 2, h: 2, map: [1,1, 1,1] },
+    "大盾":     { w: 2, h: 2, map: [1,1, 1,1] },
+    "からだ上": { w: 2, h: 2, map: [1,1, 1,1] },
+    "からだ下": { w: 2, h: 4, map: [1,1, 1,1, 1,1, 1,1] },
+    "ウデ":     { w: 1, h: 3, map: [1, 1, 1] },
+    "足":       { w: 2, h: 3, map: [0,1, 0,1, 1,1] }
+};
+
+const SKILLS = [
+    { name: "たたく", req_lv: 1, cost: 5, mult: 1.0, type: "single" },
+    { name: "2倍打ち", req_lv: 5, cost: 8, mult: 2.0, type: "single" },
+    { name: "3倍打ち", req_lv: 16, cost: 11, mult: 3.0, type: "single" },
+    { name: "てかげん打ち", req_lv: 3, cost: 10, mult: 0.5, type: "single" },
+    { name: "ねらい打ち", req_lv: 23, cost: 16, mult: 1.0, type: "single", crit_up: "nerai" },
+    { name: "弱ねらい打ち", req_lv: 75, cost: 20, mult: 0.5, type: "single", crit_up: "nerai" },
+    { name: "熱風おろし", req_lv: 47, cost: 6, mult: 2.5, type: "single", temp_drop: 150 },
+    { name: "上下打ち", req_lv: 2, cost: 8, mult: 1.2, type: "multi" },
+    { name: "左右打ち", req_lv: 80, cost: 8, mult: 1.2, type: "multi" },
+    { name: "ななめ打ち", req_lv: 38, cost: 7, mult: 1.2, type: "multi" },
+    { name: "4連打ち", req_lv: 11, cost: 12, mult: 1.2, type: "multi" },
+    { name: "超4連打ち", req_lv: 27, cost: 18, mult: 2.0, type: "multi" },
+    { name: "みだれ打ち", req_lv: 13, cost: 7, mult: 0.8, type: "random" },
+    { name: "火力上げ", req_lv: 7, cost: 10, mult: 0.0, type: "temp", temp_change: 300 },
+    { name: "冷やし込み", req_lv: 33, cost: 12, mult: 0.0, type: "temp", temp_change: -300 },
+    { name: "しあげる", req_lv: 1, cost: 0, mult: 0.0, type: "finish" }
+];
+
+if (typeof window.RECIPES === "undefined") window.RECIPES = [];
+
+// ==========================================
+// 状態変数 ＆ ONNXモデル設定
+// ==========================================
 let currentRecipe = null;
 let currentTemp = 1000;
 let currentFocus = 0;
@@ -47,11 +80,7 @@ let turnCount = 0;
 
 let buffDouble = false, buffHalf = false, buffFocusHalf = false, buffFocusCrit = false;
 let shiningCellIdx = -1;
-
-let currentActionState = "idle";
-let selectedSkill = null;
-let multiHitQueue = [];
-let multiHitResults = [];
+let currentActionState = "idle", selectedSkill = null, multiHitQueue = [], multiHitResults = [];
 
 let aiSession = null;
 const CATEGORIES_ONNX = ["アタマ", "小盾", "大盾", "からだ上", "からだ下", "ウデ", "足"];
@@ -70,11 +99,9 @@ async function initAiModel() {
     try {
         aiSession = await ort.InferenceSession.create('./blacksmith_ai.onnx');
         const aiBox = document.getElementById("ai-suggestion");
-        if(aiBox) aiBox.innerHTML = "<div style='color:#4CAF50;'>🤖 ONNXモデル読込完了！</div>";
+        if(aiBox) aiBox.innerHTML = "<div style='color:#4CAF50;'>🤖 ONNXモデルスタンバイ完了！</div>";
     } catch (e) {
         console.error(e);
-        const aiBox = document.getElementById("ai-suggestion");
-        if(aiBox) aiBox.innerHTML = "<div style='color:red;'>🤖 モデル読込失敗(ファイルがないか読めません)</div>";
     }
 }
 
@@ -94,11 +121,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     setupImportUI();
-
-    setTimeout(() => {
-        renderRecipeList();
-    }, 100);
-
+    setTimeout(() => { renderRecipeList(); }, 100);
     initAiModel();
 });
 
@@ -113,29 +136,20 @@ function setupImportUI() {
             📂 レシピデータ(.json)を端末から読み込む
             <input type="file" id="json-file-input" accept=".json" style="display: none;">
         </label>
-        <div style="font-size: 0.8em; color: #aaa; margin-top: 5px;">作成したレシピの json ファイルを選択してください</div>
+        <div style="font-size: 0.8em; color: #aaa; margin-top: 5px;">作成したレシピを選択してください</div>
     `;
-    
     recipeSection.parentNode.insertBefore(importBox, recipeSection);
 
     document.getElementById("json-file-input").addEventListener("change", (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
         const reader = new FileReader();
         reader.onload = (event) => {
             try {
                 const importedData = JSON.parse(event.target.result);
-                if (Array.isArray(importedData)) {
-                    window.RECIPES = importedData;
-                } else {
-                    window.RECIPES = [importedData];
-                }
+                window.RECIPES = Array.isArray(importedData) ? importedData : [importedData];
                 renderRecipeList();
-                alert("レシピのインポートに成功しました！");
-            } catch (err) {
-                alert("JSONの読み込みに失敗しました。\nエラー: " + err.message);
-            }
+            } catch (err) { alert("JSONの読み込みに失敗しました: " + err.message); }
         };
         reader.readAsText(file);
     });
@@ -147,7 +161,7 @@ function renderRecipeList() {
     listElement.innerHTML = ""; 
     
     if (!window.RECIPES || window.RECIPES.length === 0) {
-        listElement.innerHTML = "<li style='color:#aaa;'>レシピデータがありません。上のボタンからJSONファイルを読み込んでください。</li>";
+        listElement.innerHTML = "<li style='color:#aaa;'>レシピデータを読み込んでください。</li>";
         return;
     }
 
@@ -170,7 +184,7 @@ function startSmithing(recipe) {
     document.getElementById("display-jigane").textContent = `地金: ${recipe.jiganeType || recipe.jigane}`;
     
     playerLevel = 80;
-    maxFocus = (typeof FOCUS_BY_LEVEL !== "undefined" ? FOCUS_BY_LEVEL[playerLevel] : 207) + 45; 
+    maxFocus = FOCUS_BY_LEVEL[playerLevel] + 45; 
     currentFocus = maxFocus;
     currentTemp = 1000;
     turnCount = 0;
@@ -179,7 +193,7 @@ function startSmithing(recipe) {
 
     gridState = [];
     recipe.targets.forEach(target => {
-        gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false, baseTarget: (target.min+target.max)/2 });
+        gridState.push({ value: 0, min: target.min, max: target.max, isLocked: false });
     });
     history = [];
     
@@ -204,11 +218,6 @@ function renderGrid() {
     if (!gridContainer) return;
     gridContainer.innerHTML = "";
     
-    if (typeof EQUIP_LAYOUTS === "undefined") {
-        alert("エラー: 装備レイアウトデータ(data.js)が見つかりません。");
-        return;
-    }
-
     const layout = EQUIP_LAYOUTS[currentRecipe.category];
     if(!layout) return;
 
@@ -248,9 +257,7 @@ function renderGrid() {
                 `;
                 wrapper.appendChild(cellDiv);
                 cellIndex++;
-            } else {
-                wrapper.classList.add("blank");
-            }
+            } else { wrapper.classList.add("blank"); }
             
             wrapper.addEventListener("click", () => {
                 if (currentActionState !== "skillSelected") { alert("先にスキルを選んでください。"); return; }
@@ -291,9 +298,6 @@ function setupSkills() {
     const skillList = document.getElementById("skill-list");
     if (!skillList) return;
     skillList.innerHTML = "";
-    
-    if (typeof SKILLS === "undefined") return;
-
     SKILLS.forEach(skill => {
         if (playerLevel >= skill.req_lv) {
             const btn = document.createElement("button");
@@ -476,6 +480,8 @@ async function calculateAI() {
     const vals = [], mins = [], maxs = [];
     for (let i = 0; i < 8; i++) {
         if (i < currentRecipe.targets.length) {
+            // ⚠️ 質問：Python側で学習した際、これらの数値をどうやって正規化（割り算など）していましたか？
+            // 現在は生の数値（例: 1000など）を直接AIに渡しています。
             vals.push(gridState[i] ? gridState[i].value : 0);
             mins.push(currentRecipe.targets[i].min);
             maxs.push(currentRecipe.targets[i].max);
