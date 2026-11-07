@@ -1,7 +1,7 @@
 // ==========================================
-// app.js - Ver 12.6 (GitHub直接編集・ONNXテスト版)
+// app.js - Ver 12.7 (レシピ端末読み込み対応・ONNXテスト版)
 // ==========================================
-const UPDATE_VERSION = "Ver 12.6 (ONNXテスト版)";
+const UPDATE_VERSION = "Ver 12.7 (レシピ端末読み込み対応・ONNX版)";
 
 const style = document.createElement("style");
 style.innerHTML = `
@@ -27,10 +27,14 @@ style.innerHTML = `
 .shining-cell { box-shadow: 0 0 20px #ffeb3b inset; border-color: #ffeb3b; }
 #jigane-buff-display { text-align: center; font-weight: bold; color: #ffeb3b; margin: 10px; min-height: 24px; font-size: 1.1em; }
 .skill-btn.finish-btn { background: #4CAF50; border-color: #388E3C; font-weight: bold; width: 100%; margin-top: 10px; }
+.import-box { background: #2a2a2a; border: 2px dashed #e09f3e; padding: 12px; border-radius: 6px; margin: 15px 0; text-align: center; }
 `;
 document.head.appendChild(style);
 
-// ※ FOCUS_BY_LEVEL, EQUIP_LAYOUTS, SKILLS, RECIPES は data.js にあるためここでは宣言しません。
+// ※ FOCUS_BY_LEVEL, EQUIP_LAYOUTS, SKILLS は data.js にあるためここでは宣言しません。
+if (typeof window.RECIPES === "undefined") {
+    window.RECIPES = []; // レシピが読み込めなかった場合の初期化
+}
 
 let currentRecipe = null;
 let currentTemp = 1000;
@@ -53,7 +57,6 @@ let aiSession = null;
 const CATEGORIES_ONNX = ["アタマ", "小盾", "大盾", "fromからだ上", "からだ上", "からだ下", "ウデ", "足"];
 const JIGANE_TYPES_ONNX = ["普通", "集中変化", "光", "戻り", "倍半"];
 
-// ONNX アクションIDマッピング
 const ACTION_NAMES = [
     "通常打ち(マスA)", "通常打ち(マスB)", "通常打ち(マスC)", "通常打ち(マスD)",
     "通常打ち(マスE)", "通常打ち(マスF)", "通常打ち(マスG)", "通常打ち(マスH)",
@@ -90,24 +93,67 @@ document.addEventListener("DOMContentLoaded", () => {
         document.querySelector(".action-panel").prepend(buffDiv);
     }
 
+    setupImportUI();
+
     setTimeout(() => {
-        if (typeof RECIPES !== "undefined") {
-            renderRecipeList();
-        } else {
-            document.getElementById("recipe-list").innerHTML = "<li style='color:red;'>エラー: レシピデータが見つかりません。data.jsの読み込みを確認してください。</li>";
-        }
+        renderRecipeList();
     }, 100);
 
     initAiModel();
 });
 
+function setupImportUI() {
+    const recipeSection = document.getElementById("recipe-list");
+    if (!recipeSection) return;
+    
+    const importBox = document.createElement("div");
+    importBox.className = "import-box";
+    importBox.innerHTML = `
+        <label style="cursor: pointer; font-weight: bold; color: #e09f3e;">
+            📂 レシピデータ(.json)を端末から読み込む
+            <input type="file" id="json-file-input" accept=".json" style="display: none;">
+        </label>
+        <div style="font-size: 0.8em; color: #aaa; margin-top: 5px;">作成したレシピの json ファイルを選択してください</div>
+    `;
+    
+    recipeSection.parentNode.insertBefore(importBox, recipeSection);
+
+    document.getElementById("json-file-input").addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const importedData = JSON.parse(event.target.result);
+                if (Array.isArray(importedData)) {
+                    window.RECIPES = importedData;
+                } else {
+                    window.RECIPES = [importedData];
+                }
+                renderRecipeList();
+                alert("レシピのインポートに成功しました！");
+            } catch (err) {
+                alert("JSONの読み込みに失敗しました。\nエラー: " + err.message);
+            }
+        };
+        reader.readAsText(file);
+    });
+}
+
 function renderRecipeList() {
     const listElement = document.getElementById("recipe-list");
     if (!listElement) return;
     listElement.innerHTML = ""; 
-    RECIPES.forEach(recipe => {
+    
+    if (!window.RECIPES || window.RECIPES.length === 0) {
+        listElement.innerHTML = "<li style='color:#aaa;'>レシピデータがありません。上のボタンからJSONファイルを読み込んでください。</li>";
+        return;
+    }
+
+    window.RECIPES.forEach(recipe => {
         const li = document.createElement("li");
-        li.innerHTML = `<strong>${recipe.name}</strong> (${recipe.category} / 地金: ${recipe.jiganeType})`;
+        li.innerHTML = `<strong>${recipe.name}</strong> (${recipe.category} / 地金: ${recipe.jiganeType || recipe.jigane})`;
         li.style.cursor = "pointer";
         li.style.padding = "10px";
         li.style.background = "#333";
@@ -158,6 +204,11 @@ function renderGrid() {
     if (!gridContainer) return;
     gridContainer.innerHTML = "";
     
+    if (typeof EQUIP_LAYOUTS === "undefined") {
+        alert("エラー: 装備レイアウトデータ(data.js)が見つかりません。");
+        return;
+    }
+
     const layout = EQUIP_LAYOUTS[currentRecipe.category];
     if(!layout) return;
 
@@ -240,6 +291,9 @@ function setupSkills() {
     const skillList = document.getElementById("skill-list");
     if (!skillList) return;
     skillList.innerHTML = "";
+    
+    if (typeof SKILLS === "undefined") return;
+
     SKILLS.forEach(skill => {
         if (playerLevel >= skill.req_lv) {
             const btn = document.createElement("button");
