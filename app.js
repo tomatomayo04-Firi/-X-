@@ -54,7 +54,7 @@ let multiHitQueue = [];
 let multiHitResults = [];
 
 let aiSession = null;
-const CATEGORIES_ONNX = ["アタマ", "小盾", "大盾", "fromからだ上", "からだ上", "からだ下", "ウデ", "足"];
+const CATEGORIES_ONNX = ["アタマ", "小盾", "大盾", "からだ上", "からだ下", "ウデ", "足"];
 const JIGANE_TYPES_ONNX = ["普通", "集中変化", "光", "戻り", "倍半"];
 
 const ACTION_NAMES = [
